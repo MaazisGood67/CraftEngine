@@ -1,0 +1,15 @@
+build/
+out/
+.vs/
+*.user
+*.suo
+*.pdb
+*.ilk
+*.obj
+*.exe
+*.dll
+*.lib
+*.exp
+assets-local/
+*.jar
+CMakeUserPresets.json
