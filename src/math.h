@@ -1,6 +1,6 @@
 // CraftEngine - minimal row-vector math (matches HLSL `row_major` + mul(v, M))
 #pragma once
-#include <cmath>
+#include <math.h>
 
 struct Vec3 {
     float x = 0, y = 0, z = 0;
