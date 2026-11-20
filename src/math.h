@@ -16,7 +16,7 @@ inline float dot(const Vec3& a, const Vec3& b) { return a.x * b.x + a.y * b.y + 
 inline Vec3 cross(const Vec3& a, const Vec3& b) {
     return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
 }
-inline float length(const Vec3& v) { return std::sqrt(dot(v, v)); }
+inline float length(const Vec3& v) { return sqrt(dot(v, v)); }
 inline Vec3 normalize(const Vec3& v) {
     float l = length(v);
     return (l > 1e-6f) ? v * (1.0f / l) : Vec3{0, 0, 0};
@@ -34,7 +34,7 @@ struct Mat4 {
     // Left-handed perspective, depth range [0,1] (D3D convention).
     static Mat4 perspective(float fovYRadians, float aspect, float zNear, float zFar) {
         Mat4 r;
-        float f = 1.0f / std::tan(fovYRadians * 0.5f);
+        float f = 1.0f / tan(fovYRadians * 0.5f);
         r.m[0][0] = f / aspect;
         r.m[1][1] = f;
         r.m[2][2] = zFar / (zFar - zNear);
