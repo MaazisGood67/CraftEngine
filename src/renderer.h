@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "chunk.h"
-#include "math.h"
+#include "vmath.h"
 #include "textures.h"
 
 struct Frustum {
