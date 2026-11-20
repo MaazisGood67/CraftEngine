@@ -8,14 +8,24 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Static CRT so the release .exe runs without a VC++ redistributable.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+# zlib (PNG/ZIP inflate) — fetched source, built static, no system dependency.
+include(FetchContent)
+FetchContent_Declare(zlib
+    URL https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz
+)
+FetchContent_MakeAvailable(zlib)
+
 add_executable(CraftEngine WIN32
     src/main.cpp
     src/chunk.cpp
     src/world.cpp
     src/renderer.cpp
+    src/textures.cpp
+    src/zip.cpp
+    src/png.cpp
 )
 
-target_include_directories(CraftEngine PRIVATE src)
+target_include_directories(CraftEngine PRIVATE src ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
 
 if (MSVC)
     target_compile_options(CraftEngine PRIVATE
@@ -28,7 +38,7 @@ if (MSVC)
     )
 endif()
 
-target_link_libraries(CraftEngine PRIVATE d3d10 dxgi d3dcompiler)
+target_link_libraries(CraftEngine PRIVATE d3d10 dxgi d3dcompiler zlibstatic)
 
 if (MSVC)
     set_target_properties(CraftEngine PROPERTIES

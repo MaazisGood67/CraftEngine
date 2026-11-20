@@ -13,3 +13,7 @@ out/
 assets-local/
 *.jar
 CMakeUserPresets.json
+# Mojang assets / scratch debug — never commit
+stone.png
+*_debug.txt
+assets_extracted/

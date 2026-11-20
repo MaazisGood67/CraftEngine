@@ -8,10 +8,12 @@
 #include <windows.h>
 
 #include <d3d10.h>
+#include <string>
 #include <vector>
 
 #include "chunk.h"
 #include "math.h"
+#include "textures.h"
 
 struct Frustum {
     float planes[6][4]{};
@@ -39,6 +41,8 @@ public:
     void shutdown();
 
     bool resize(int width, int height);
+
+    bool loadTextures(const std::vector<LoadedTexture>& loaded);
 
     void uploadChunk(GpuChunk& gpu, const ChunkMesh& mesh, const Vec3& mn, const Vec3& mx);
     RenderStats render(const Mat4& viewProj, const Vec3& camPos,
@@ -76,6 +80,10 @@ private:
     ID3D10RasterizerState* rasterWire_ = nullptr;
     ID3D10DepthStencilState* depthState_ = nullptr;
     ID3D10BlendState* blendState_ = nullptr;
+
+    std::vector<uint8_t> tilePixels_;
+    std::vector<LoadedTexture> loaded_;
+    bool texturesLoaded_ = false;
 
     struct Constants {
         float viewProj[16];

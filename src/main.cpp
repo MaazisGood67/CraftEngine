@@ -7,7 +7,9 @@
 #include <vector>
 
 #include "renderer.h"
+#include "textures.h"
 #include "world.h"
+#include "zip.h"
 
 namespace {
 
@@ -120,6 +122,20 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         return 1;
     }
     g_renderer = &renderer;
+
+    // ---- load real textures from the user's Minecraft jar (fallback: procedural) ----
+    {
+        const wchar_t* jarWide = L"C:\\Users\\Administrator\\AppData\\Roaming\\Migurinth\\meta\\versions\\26.3\\26.3.jar";
+        const int len = WideCharToMultiByte(CP_UTF8, 0, jarWide, -1, nullptr, 0, nullptr, nullptr);
+        std::string jarPath(len, 0);
+        WideCharToMultiByte(CP_UTF8, 0, jarWide, -1, &jarPath[0], len, nullptr, nullptr);
+        std::vector<LoadedTexture> loaded;
+        std::string texErr;
+        const bool okT = LoadTexturesFromJar(jarPath, loaded, texErr);
+        if (okT) {
+            renderer.loadTextures(loaded);
+        }
+    }
 
     // ---- world ----
     World world;

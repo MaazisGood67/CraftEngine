@@ -368,10 +368,12 @@ bool Renderer::createPipelines() {
 bool Renderer::createTextureArray() {
     const UINT size = 16;
     const UINT tileCount = TILE_COUNT;
-    std::vector<uint8_t> pixels(static_cast<size_t>(size) * size * 4 * tileCount);
-
-    for (UINT t = 0; t < tileCount; ++t)
-        generateTile(pixels.data() + static_cast<size_t>(t) * size * size * 4, static_cast<int>(t));
+    const size_t n = static_cast<size_t>(tileCount) * size * size * 4;
+    if (tilePixels_.empty()) {
+        tilePixels_.assign(n, 0);
+        for (UINT t = 0; t < tileCount; ++t)
+            GenerateProceduralTile(static_cast<int>(t), tilePixels_.data() + static_cast<size_t>(t) * size * size * 4);
+    }
 
     D3D10_TEXTURE2D_DESC td{};
     td.Width = size;
@@ -385,7 +387,7 @@ bool Renderer::createTextureArray() {
 
     std::vector<D3D10_SUBRESOURCE_DATA> init(tileCount);
     for (UINT t = 0; t < tileCount; ++t) {
-        init[t].pSysMem = pixels.data() + static_cast<size_t>(t) * size * size * 4;
+        init[t].pSysMem = tilePixels_.data() + static_cast<size_t>(t) * size * size * 4;
         init[t].SysMemPitch = size * 4;
         init[t].SysMemSlicePitch = size * size * 4;
     }
@@ -404,6 +406,25 @@ bool Renderer::createTextureArray() {
     const HRESULT hr = device_->CreateShaderResourceView(tex, &srv, &texArray_);
     tex->Release();
     return SUCCEEDED(hr);
+}
+
+bool Renderer::loadTextures(const std::vector<LoadedTexture>& loaded) {
+    loaded_ = loaded;
+    texturesLoaded_ = true;
+
+    const size_t n = static_cast<size_t>(TILE_COUNT) * 16 * 16 * 4;
+    if (tilePixels_.size() != n) tilePixels_.assign(n, 0);
+    for (int t = 0; t < TILE_COUNT; ++t)
+        GenerateProceduralTile(t, tilePixels_.data() + static_cast<size_t>(t) * 16 * 16 * 4);
+
+    for (const LoadedTexture& lt : loaded) {
+        if (lt.tile < 0) continue;
+        const PngInfo& png = lt.png;
+        if (png.width <= 0 || png.height <= 0) continue;
+        ScaleTo16(png.rgba.data(), png.width, png.height,
+                 tilePixels_.data() + static_cast<size_t>(lt.tile) * 16 * 16 * 4);
+    }
+    return true;
 }
 
 void Renderer::uploadChunk(GpuChunk& gpu, const ChunkMesh& mesh, const Vec3& mn, const Vec3& mx) {
