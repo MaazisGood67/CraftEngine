@@ -18,6 +18,11 @@ void GenerateProceduralTile(int tile, uint8_t* dst);
 // Loads every compressed image entry under textures/** from the jar.
 bool LoadTexturesFromJar(const std::string& jarPath, std::vector<LoadedTexture>& out, std::string& err);
 
+// Same filter over already-loaded zip entries (avoids a second jar pass).
+struct ZipEntry;
+bool LoadTexturesFromEntries(const std::vector<ZipEntry>& entries,
+                             std::vector<LoadedTexture>& out);
+
 // Resolves which Tile a jar texture path belongs to.
 int TileForPath(const std::string& path);
 

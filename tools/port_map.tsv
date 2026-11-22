@@ -1,0 +1,53 @@
+# CraftEngine port ledger: vanilla 26.3 method -> C++ port.
+# Tab-separated. status: port | partial | missing | noport | seam
+# Keep this file in sync with the code; tools/port-ledger.ps1 queries it.
+vanilla_class	vanilla_method	cpp_file	cpp_symbol	status	notes
+net.minecraft.world.entity.player.Player	tick	src/player.cpp	tickPlayer	port	walk/sprint/sneak/water/fly; vanilla constants in vanilla.h
+net.minecraft.world.entity.player.Player	travel	src/player.cpp	tickPlayer	partial	no ladder/climbable yet
+net.minecraft.world.entity.player.Player	causeFallDamage	src/combat.cpp	fallDamage	port	floor(distance - 3)
+net.minecraft.world.entity.player.Player	getDigSpeed	src/main.cpp	breakBlock	missing	instant break only; no hardness/tool progress
+net.minecraft.world.entity.player.Player	attack	src/main.cpp	attackMob	partial	damage/knockback/cooldown; no sweep/enchant
+net.minecraft.world.entity.LivingEntity	hurt	src/combat.cpp	damageEntity	port	armour formula, absorption, invulnerability
+net.minecraft.world.entity.LivingEntity	knockback	src/combat.cpp	knockbackVelocity	port	0.4 horizontal, 0.35 up
+net.minecraft.world.entity.ai.attributes.Attributes	MAX_HEALTH	src/vanilla.h	HEALTH	port	20
+net.minecraft.world.item.ItemStack	getMaxStackSize	src/inventory.cpp	itemMaxStack	port	64/16/1
+net.minecraft.world.item.ItemStack	hurtAndBreak	src/inventory.cpp	Inventory::damageItem	port
+net.minecraft.world.item.crafting.CraftingMenu	slots	src/inventory.cpp	Inventory::updateCrafting	partial	4 recipes only
+net.minecraft.client.gui.screens.TitleScreen	init	src/main.cpp	drawTitle	port	panorama, logo, splash, buttons
+net.minecraft.client.gui.screens.TitleScreen	render	src/main.cpp	drawTitle	port
+net.minecraft.client.gui.screens.PauseScreen	init	src/main.cpp	drawPause	partial	buttons, no share/advancements
+net.minecraft.client.gui.screens.OptionsScreen	init	src/main.cpp	drawOptions	partial	fov/render distance/volume only
+net.minecraft.client.gui.Gui	render	src/main.cpp	drawHud	partial	hotbar/hearts/hunger/crosshair; no xp/armour/air
+net.minecraft.client.gui.screens.inventory.InventoryScreen	render	src/main.cpp	drawInventory	missing	no inventory screen yet
+net.minecraft.client.gui.screens.inventory.CreativeModeInventoryScreen	render	src/main.cpp	drawCreative	missing
+net.minecraft.client.gui.screens.worldselection.CreateWorldScreen	init	src/main.cpp	drawWorldCreate	missing
+net.minecraft.client.gui.screens.LoadingOverlay	render	src/main.cpp	runLoadStep	port	progress bar + step text
+net.minecraft.client.Options	keyMappings	src/main.cpp	WM_KEYDOWN	partial	WASD/space/shift/ctrl/F/E/1-9; no rebinding
+net.minecraft.client.KeyMapping	set	src/main.cpp	WM_KEYDOWN	seam	needs vanilla default table from options.txt
+net.minecraft.client.renderer.GameRenderer	pick	src/player.cpp	raycast	port	5.0 reach
+net.minecraft.world.level.Level	getBlockState	src/world.cpp	World::getBlock	port
+net.minecraft.world.level.Level	setBlock	src/world.cpp	World::setBlock	port
+net.minecraft.world.level.chunk.LevelChunk	setBlockState	src/chunk.cpp	Chunk::set	port
+net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator	buildSurface	src/world.cpp	World::generate	missing	self-made heightAt; replace with vanilla density functions
+net.minecraft.world.level.levelgen.NoiseChunk	computeHeight	src/world.cpp	World::heightAt	missing	must match 26.3 noise settings
+net.minecraft.world.level.biome.MultiNoiseBiomeSource	getNoiseBiome	src/world.cpp	World::biomeAt	missing
+net.minecraft.world.level.levelgen.structure.Structure	place	src/world.cpp	World::generate	missing	villages, temples, strongholds
+net.minecraft.world.level.block.Block	getDestroyProgress	src/blocks.h	hardness	partial	values present, not used for timing
+net.minecraft.world.entity.Mob	aiStep	src/mobs.cpp	MobManager::tick	partial	wander/chase/melee; no pathfinding/gravity
+net.minecraft.world.entity.monster.Creeper	explode	src/mobs.cpp	MobManager::tick	partial	fixed 16 damage, no blast raycast
+net.minecraft.world.entity.boss.enderdragon.EnderDragon	tick	src/mobs.cpp	MobManager::tick	missing	no dragon fight
+net.minecraft.world.level.block.entity.EndPortalBlockEntity	spawn	src/main.cpp	enterGame	missing	no End dimension
+net.minecraft.client.gui.screens.WinScreen	render	src/main.cpp	drawCredits	missing	no credits
+net.minecraft.server.level.ServerLevel	tick	src/main.cpp	tickGame	partial	no day/night, weather, random ticks
+net.minecraft.world.level.GameRules	randomTickSpeed	src/world.cpp	World::generate	missing
+net.minecraft.world.entity.EntityType	create	src/mobs.cpp	MobManager::spawn	partial	19 mobs wired of 650 registry entries
+net.minecraft.world.level.levelgen.Xoroshiro128PlusPlus	nextLong	src/rng.cpp	mc::Xoroshiro128PlusPlus::nextLong	port	rotate/xor/shift from bytecode; rng harness PASS
+net.minecraft.world.level.levelgen.XoroshiroRandomSource	nextInt(int)	src/rng.cpp	mc::XoroshiroRandom::nextInt	port	32-bit multiply + rejection from bytecode
+net.minecraft.world.level.levelgen.XoroshiroRandomSource	nextLong	src/rng.cpp	mc::XoroshiroRandom::nextLong	port
+net.minecraft.world.level.levelgen.XoroshiroRandomSource	nextFloat	src/rng.cpp	mc::XoroshiroRandom::nextFloat	port	raw float bits compared
+net.minecraft.world.level.levelgen.XoroshiroRandomSource	nextDouble	src/rng.cpp	mc::XoroshiroRandom::nextDouble	port	raw double bits compared
+net.minecraft.world.level.levelgen.XoroshiroRandomSource	fork	src/rng.cpp	mc::XoroshiroRandom::fork	port	consumes two longs from the parent
+net.minecraft.world.level.levelgen.LegacyRandomSource	next(int)	src/rng.cpp	mc::LegacyRandom::next	port	48-bit LCG
+net.minecraft.world.level.levelgen.BitRandomSource	nextInt(int)	src/rng.cpp	mc::LegacyRandom::nextInt	port	power-of-two fast path + rejection
+net.minecraft.world.level.levelgen.RandomSupport	upgradeSeedTo128bit	src/rng.cpp	mc::upgradeSeedTo128bit	port	Stafford13 mixing
+net.minecraft.world.level.levelgen.MarsagliaPolarGaussian	nextGaussian	src/rng.cpp	mc::MarsagliaPolarGaussian::nextGaussian	partial	log/sqrt may differ by ULP; not in rng harness yet

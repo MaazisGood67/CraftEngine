@@ -132,6 +132,15 @@ Block World::getBlock(int wx, int wy, int wz) const {
     return chunk(cx, cz).get(wx & 15, wy, wz & 15);
 }
 
+bool World::setBlock(int wx, int wy, int wz, Block b) {
+    if (wy < 0 || wy >= Chunk::SY) return false;
+    const int cx = wx >> 4;
+    const int cz = wz >> 4;
+    if (!inBounds(cx, cz)) return false;
+    chunk(cx, cz).set(wx & 15, wy, wz & 15, b);
+    return true;
+}
+
 void World::buildMeshes(std::vector<ChunkMesh>& meshes) const {
     meshes.resize(static_cast<size_t>(CX) * CZ);
 

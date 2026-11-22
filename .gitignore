@@ -17,3 +17,14 @@ CMakeUserPresets.json
 stone.png
 *_debug.txt
 assets_extracted/
+.local/
+vanilla/
+*.log
+# Local captures and user options - never commit
+shot_*.png
+crop_*.png
+options.txt
+*.bmp
+
+*.o
+

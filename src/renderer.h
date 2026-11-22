@@ -29,6 +29,12 @@ struct GpuChunk {
     Vec3 max;
 };
 
+struct EntityBox {
+    Vec3 pos;      // feet centre
+    Vec3 size;     // width, height, depth
+    uint32_t color;
+};
+
 struct RenderStats {
     int drawn = 0;
     int total = 0;
@@ -46,8 +52,12 @@ public:
 
     void uploadChunk(GpuChunk& gpu, const ChunkMesh& mesh, const Vec3& mn, const Vec3& mx);
     RenderStats render(const Mat4& viewProj, const Vec3& camPos,
-                       const std::vector<GpuChunk>& chunks,
-                       bool wireframe, bool vsync);
+                       const std::vector<GpuChunk>& chunks, bool wireframe);
+    void renderEntities(const std::vector<EntityBox>& boxes);
+    int  entityDrawCount = 0;
+    void clear(const float color[4]);
+    void setFog(float start, float end) { fogStart_ = start; fogEnd_ = end; }
+    void present(bool vsync);
 
     ID3D10Device* device() const { return device_; }
     int width() const { return width_; }
@@ -81,9 +91,17 @@ private:
     ID3D10DepthStencilState* depthState_ = nullptr;
     ID3D10BlendState* blendState_ = nullptr;
 
+    // Entity (coloured box) pipeline.
+    ID3D10InputLayout* entLayout_ = nullptr;
+    ID3D10VertexShader* entVS_ = nullptr;
+    ID3D10PixelShader* entPS_ = nullptr;
+    ID3D10Buffer* entVB_ = nullptr;
+
     std::vector<uint8_t> tilePixels_;
     std::vector<LoadedTexture> loaded_;
     bool texturesLoaded_ = false;
+    float fogStart_ = 64.0f;
+    float fogEnd_ = 104.0f;
 
     struct Constants {
         float viewProj[16];

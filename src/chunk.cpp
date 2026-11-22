@@ -156,10 +156,13 @@ void Chunk::buildMesh(ChunkMesh& out, int ox, int oy, int oz) const {
 
                     // emit quad
                     const int base[3] = {x[0], x[1], x[2]};
+                    // x[u] and x[v] still hold their LAST mask-loop values here,
+                    // so they must NOT be added to the greedy merge indices i/j.
+                    // Only the slice plane (x[d]) carries a real coordinate.
                     int p0[3] = {0, 0, 0};
                     p0[d] = base[d];
-                    p0[u] = base[u] + i;
-                    p0[v] = base[v] + j;
+                    p0[u] = i;
+                    p0[v] = j;
 
                     const float bright = faceBrightness(f.face);
                     const uint32_t startVertex = static_cast<uint32_t>(out.vertices.size());

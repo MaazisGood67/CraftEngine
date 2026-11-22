@@ -23,13 +23,24 @@ add_executable(CraftEngine WIN32
     src/textures.cpp
     src/zip.cpp
     src/png.cpp
+    src/assets.cpp
+    src/vanilla_data.cpp
+    src/rng.cpp
+    src/gui.cpp
+    src/font.cpp
+    src/sound.cpp
+    src/player.cpp
+    src/inventory.cpp
+    src/combat.cpp
+    src/mobs.cpp
+    src/achievements.cpp
 )
 
 target_include_directories(CraftEngine PRIVATE src ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
 
 if (MSVC)
     target_compile_options(CraftEngine PRIVATE
-        /W3 /O2 /fp:fast /arch:SSE2 /permissive- /Zc:__cplusplus
+        /W3 /O2 /fp:precise /arch:SSE2 /permissive- /Zc:__cplusplus
         $<$<CONFIG:Debug>:/Od /Zi>
     )
     target_compile_definitions(CraftEngine PRIVATE
@@ -38,7 +49,7 @@ if (MSVC)
     )
 endif()
 
-target_link_libraries(CraftEngine PRIVATE d3d10 dxgi d3dcompiler zlibstatic)
+target_link_libraries(CraftEngine PRIVATE d3d10 dxgi d3dcompiler zlibstatic winmm)
 
 if (MSVC)
     set_target_properties(CraftEngine PROPERTIES

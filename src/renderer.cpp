@@ -362,6 +362,42 @@ bool Renderer::createPipelines() {
     bd.RenderTargetWriteMask[0] = D3D10_COLOR_WRITE_ENABLE_ALL;
     if (FAILED(device_->CreateBlendState(&bd, &blendState_))) return false;
 
+    // Entity pipeline: untextured, vertex-coloured boxes for mobs.
+    {
+        ID3D10Blob* evs = nullptr;
+        ID3D10Blob* eps = nullptr;
+        ID3D10Blob* errs = nullptr;
+        if (FAILED(D3D10CompileShader(kEntityShader, strlen(kEntityShader), nullptr, nullptr,
+                                      nullptr, "VSEntity", "vs_4_0", 0, &evs, &errs))) {
+            if (errs) errs->Release();
+            return false;
+        }
+        if (errs) { errs->Release(); errs = nullptr; }
+        if (FAILED(D3D10CompileShader(kEntityShader, strlen(kEntityShader), nullptr, nullptr,
+                                      nullptr, "PSEntity", "ps_4_0", 0, &eps, &errs))) {
+            if (evs) evs->Release();
+            if (errs) errs->Release();
+            return false;
+        }
+        if (errs) errs->Release();
+        device_->CreateVertexShader(evs->GetBufferPointer(), evs->GetBufferSize(), &entVS_);
+        device_->CreatePixelShader(eps->GetBufferPointer(), eps->GetBufferSize(), &entPS_);
+        D3D10_INPUT_ELEMENT_DESC eElems[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D10_INPUT_PER_VERTEX_DATA, 0},
+            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D10_INPUT_PER_VERTEX_DATA, 0},
+        };
+        device_->CreateInputLayout(eElems, 2, evs->GetBufferPointer(), evs->GetBufferSize(), &entLayout_);
+        evs->Release();
+        eps->Release();
+
+        D3D10_BUFFER_DESC ebd{};
+        ebd.ByteWidth = sizeof(float) * 7 * 36 * 512; // up to 512 boxes
+        ebd.Usage = D3D10_USAGE_DYNAMIC;
+        ebd.BindFlags = D3D10_BIND_VERTEX_BUFFER;
+        ebd.CPUAccessFlags = D3D10_CPU_ACCESS_WRITE;
+        device_->CreateBuffer(&ebd, nullptr, &entVB_);
+    }
+
     return true;
 }
 
@@ -414,23 +450,78 @@ bool Renderer::loadTextures(const std::vector<LoadedTexture>& loaded) {
 
     const size_t n = static_cast<size_t>(TILE_COUNT) * 16 * 16 * 4;
     if (tilePixels_.size() != n) tilePixels_.assign(n, 0);
+
+    // Debug aid: drop a file named DEBUG_TILES next to the exe to paint every
+    // texture-array slice a solid diagnostic colour (tile 0 = red, etc.).
+    FILE* dbgFile = fopen("DEBUG_TILES", "rb");
+    const bool tileDebug = dbgFile != nullptr;
+    if (dbgFile) fclose(dbgFile);
+    if (tileDebug) {
+        static const uint8_t dbg[TILE_COUNT][3] = {
+            {255, 0, 0},     // 0 grass top
+            {0, 255, 0},     // 1 grass side
+            {0, 0, 255},     // 2 dirt
+            {255, 255, 0},   // 3 stone
+            {255, 0, 255},   // 4 sand
+            {0, 255, 255},   // 5 water
+            {128, 64, 0},    // 6 log side
+            {192, 160, 64},  // 7 log top
+            {0, 128, 0},     // 8 leaves
+            {160, 96, 32},   // 9 planks
+            {128, 128, 128}, // 10 cobble
+            {64, 64, 64},    // 11 bedrock
+        };
+        for (int t = 0; t < TILE_COUNT; ++t) {
+            uint8_t* p = tilePixels_.data() + static_cast<size_t>(t) * 16 * 16 * 4;
+            for (int i = 0; i < 16 * 16; ++i) {
+                p[i * 4 + 0] = dbg[t][0];
+                p[i * 4 + 1] = dbg[t][1];
+                p[i * 4 + 2] = dbg[t][2];
+                p[i * 4 + 3] = 255;
+            }
+        }
+        if (texArray_) { texArray_->Release(); texArray_ = nullptr; }
+        return createTextureArray();
+    }
+
     for (int t = 0; t < TILE_COUNT; ++t)
         GenerateProceduralTile(t, tilePixels_.data() + static_cast<size_t>(t) * 16 * 16 * 4);
 
     for (const LoadedTexture& lt : loaded) {
-        if (lt.tile < 0) continue;
+        if (lt.tile < 0 || lt.tile >= TILE_COUNT) continue;
         const PngInfo& png = lt.png;
         if (png.width <= 0 || png.height <= 0) continue;
         ScaleTo16(png.rgba.data(), png.width, png.height,
                  tilePixels_.data() + static_cast<size_t>(lt.tile) * 16 * 16 * 4);
     }
-    return true;
+
+    // Biome tints: these textures are grayscale in the jar (vanilla tints them
+    // at render time). Plains values: grass 0x91BD59, foliage 0x77AB2F,
+    // water 0x3F76E4.
+    auto tint = [&](int tile, int tr, int tg, int tb) {
+        uint8_t* p = tilePixels_.data() + static_cast<size_t>(tile) * 16 * 16 * 4;
+        for (int i = 0; i < 16 * 16; ++i) {
+            p[i * 4 + 0] = static_cast<uint8_t>(p[i * 4 + 0] * tr / 255);
+            p[i * 4 + 1] = static_cast<uint8_t>(p[i * 4 + 1] * tg / 255);
+            p[i * 4 + 2] = static_cast<uint8_t>(p[i * 4 + 2] * tb / 255);
+        }
+    };
+    tint(TILE_GRASS_TOP, 0x91, 0xBD, 0x59);
+    tint(TILE_LEAVES, 0x77, 0xAB, 0x2F);
+    tint(TILE_WATER, 0x3F, 0x76, 0xE4);
+
+    // Upload the real jar pixels into the GPU texture array.
+    if (texArray_) { texArray_->Release(); texArray_ = nullptr; }
+    return createTextureArray();
 }
 
 void Renderer::uploadChunk(GpuChunk& gpu, const ChunkMesh& mesh, const Vec3& mn, const Vec3& mx) {
     gpu.min = mn;
     gpu.max = mx;
     gpu.indexCount = static_cast<UINT>(mesh.indices.size());
+
+    if (gpu.vb) { gpu.vb->Release(); gpu.vb = nullptr; }
+    if (gpu.ib) { gpu.ib->Release(); gpu.ib = nullptr; }
 
     if (mesh.vertices.empty() || mesh.indices.empty()) return;
 
@@ -450,8 +541,7 @@ void Renderer::uploadChunk(GpuChunk& gpu, const ChunkMesh& mesh, const Vec3& mn,
 }
 
 RenderStats Renderer::render(const Mat4& viewProj, const Vec3& camPos,
-                             const std::vector<GpuChunk>& chunks,
-                             bool wireframe, bool vsync) {
+                             const std::vector<GpuChunk>& chunks, bool wireframe) {
     RenderStats stats;
     stats.total = static_cast<int>(chunks.size());
 
@@ -470,8 +560,8 @@ RenderStats Renderer::render(const Mat4& viewProj, const Vec3& camPos,
     c.fogColor[1] = kSkyColor[1];
     c.fogColor[2] = kSkyColor[2];
     c.fogColor[3] = 1.0f;
-    c.fogParams[0] = 64.0f;
-    c.fogParams[1] = 104.0f;
+    c.fogParams[0] = fogStart_;
+    c.fogParams[1] = fogEnd_;
 
     void* mapped = nullptr;
     if (SUCCEEDED(cb_->Map(D3D10_MAP_WRITE_DISCARD, 0, &mapped))) {
@@ -506,8 +596,86 @@ RenderStats Renderer::render(const Mat4& viewProj, const Vec3& camPos,
         stats.triangles += ch.indexCount / 3;
     }
 
-    swap_->Present(vsync ? 1 : 0, 0);
     return stats;
+}
+
+void Renderer::present(bool vsync) {
+    if (swap_) swap_->Present(vsync ? 1 : 0, 0);
+}
+
+void Renderer::clear(const float color[4]) {
+    if (!device_) return;
+    device_->ClearRenderTargetView(rtv_, color);
+    device_->ClearDepthStencilView(dsv_, D3D10_CLEAR_DEPTH, 1.0f, 0);
+}
+
+void Renderer::renderEntities(const std::vector<EntityBox>& boxes) {
+    if (boxes.empty() || !entVB_ || !entVS_ || !entPS_) {
+        entityDrawCount = 0;
+        return;
+    }
+    const size_t maxBoxes = 512;
+    const size_t count = std::min(boxes.size(), maxBoxes);
+    entityDrawCount = static_cast<int>(count);
+
+    struct EV { float x, y, z, r, g, b, a; };
+    std::vector<EV> verts;
+    verts.reserve(count * 36);
+
+    auto addQuad = [&](const EV& a, const EV& b, const EV& c, const EV& d) {
+        verts.push_back(a); verts.push_back(b); verts.push_back(c);
+        verts.push_back(a); verts.push_back(c); verts.push_back(d);
+    };
+    auto colorOf = [](uint32_t argb, float mul) {
+        return EV{0, 0, 0,
+                  static_cast<float>((argb >> 16) & 0xFF) / 255.0f * mul,
+                  static_cast<float>((argb >> 8) & 0xFF) / 255.0f * mul,
+                  static_cast<float>(argb & 0xFF) / 255.0f * mul, 1.0f};
+    };
+
+    for (const EntityBox& box : boxes) {
+        const float hw = box.size.x * 0.5f;
+        const float hd = box.size.z * 0.5f;
+        const float y0 = box.pos.y;
+        const float y1 = y0 + box.size.y;
+        const float x0 = box.pos.x - hw, x1 = box.pos.x + hw;
+        const float z0 = box.pos.z - hd, z1 = box.pos.z + hd;
+        const EV p000 = colorOf(box.color, 0.72f), p100 = colorOf(box.color, 0.86f);
+        const EV top = colorOf(box.color, 1.0f), bottom = colorOf(box.color, 0.5f);
+
+        auto V = [](float x, float y, float z, const EV& c) {
+            return EV{x, y, z, c.r, c.g, c.b, c.a};
+        };
+        // +Y / -Y
+        addQuad(V(x0,y1,z0,top), V(x0,y1,z1,top), V(x1,y1,z1,top), V(x1,y1,z0,top));
+        addQuad(V(x0,y0,z0,bottom), V(x1,y0,z0,bottom), V(x1,y0,z1,bottom), V(x0,y0,z1,bottom));
+        // +/-X
+        addQuad(V(x1,y0,z0,p100), V(x1,y1,z0,p100), V(x1,y1,z1,p100), V(x1,y0,z1,p100));
+        addQuad(V(x0,y0,z0,p100), V(x0,y0,z1,p100), V(x0,y1,z1,p100), V(x0,y1,z0,p100));
+        // +/-Z
+        addQuad(V(x0,y0,z1,p000), V(x1,y0,z1,p000), V(x1,y1,z1,p000), V(x0,y1,z1,p000));
+        addQuad(V(x0,y0,z0,p000), V(x0,y1,z0,p000), V(x1,y1,z0,p000), V(x1,y0,z0,p000));
+    }
+
+    void* mapped = nullptr;
+    if (SUCCEEDED(entVB_->Map(D3D10_MAP_WRITE_DISCARD, 0, &mapped))) {
+        std::memcpy(mapped, verts.data(), sizeof(EV) * verts.size());
+        entVB_->Unmap();
+    }
+
+    device_->IASetInputLayout(entLayout_);
+    device_->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    device_->VSSetShader(entVS_);
+    device_->PSSetShader(entPS_);
+    device_->VSSetConstantBuffers(0, 1, &cb_);
+    device_->PSSetConstantBuffers(0, 1, &cb_);
+    device_->OMSetDepthStencilState(depthState_, 0);
+    device_->OMSetBlendState(blendState_, nullptr, 0xFFFFFFFF);
+    device_->RSSetState(rasterSolid_);
+    const UINT stride = sizeof(EV);
+    const UINT offset = 0;
+    device_->IASetVertexBuffers(0, 1, &entVB_, &stride, &offset);
+    device_->Draw(static_cast<UINT>(verts.size()), 0);
 }
 
 void Renderer::shutdown() {
@@ -524,4 +692,8 @@ void Renderer::shutdown() {
     if (rasterWire_) { rasterWire_->Release(); rasterWire_ = nullptr; }
     if (depthState_) { depthState_->Release(); depthState_ = nullptr; }
     if (blendState_) { blendState_->Release(); blendState_ = nullptr; }
+    if (entLayout_) { entLayout_->Release(); entLayout_ = nullptr; }
+    if (entVS_) { entVS_->Release(); entVS_ = nullptr; }
+    if (entPS_) { entPS_->Release(); entPS_ = nullptr; }
+    if (entVB_) { entVB_->Release(); entVB_ = nullptr; }
 }

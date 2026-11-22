@@ -17,6 +17,7 @@ public:
     void buildMeshes(std::vector<ChunkMesh>& meshes) const;
 
     Block getBlock(int wx, int wy, int wz) const;
+    bool setBlock(int wx, int wy, int wz, Block b);
     int heightAt(int wx, int wz) const;
 
     Chunk& chunk(int cx, int cz) { return chunks_[static_cast<size_t>(cz) * CX + cx]; }
