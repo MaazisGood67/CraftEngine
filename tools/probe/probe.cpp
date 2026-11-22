@@ -8,9 +8,13 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
+#include "json.h"
+#include "noise.h"
 #include "rng.h"
 
 namespace {
@@ -109,6 +113,130 @@ void Run(const std::string& gen, mc::RandomSource& r, int64_t seed) {
     }
 }
 
+struct NoiseEntry {
+    std::string name;
+    int64_t seed;
+    std::vector<std::string> values;
+};
+
+std::vector<NoiseEntry> g_noise;
+
+void AddNoise(const std::string& name, int64_t seed, const std::vector<std::string>& values) {
+    g_noise.push_back({name, seed, values});
+}
+
+void Point3d(int i, double& x, double& y, double& z) {
+    x = (i % 8) * 37.5 - 100.0;
+    y = ((i * 7) % 37) * 3.0 - 64.0;
+    z = (i / 8) * 23.25 + 50.0;
+}
+
+void Point2d(int i, double& x, double& z) {
+    x = i * 3.7 - 50.0;
+    z = i * 2.9 + 7.0;
+}
+
+bool ReadFile(const std::filesystem::path& path, std::string& out) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    out = ss.str();
+    return true;
+}
+
+bool LoadNoiseParameters(const std::filesystem::path& path, mc::NormalNoise::Parameters& p) {
+    std::string text;
+    if (!ReadFile(path, text)) return false;
+    Json root;
+    if (!ParseJson(text, root)) return false;
+    if (const Json* v = root.find("base_amplitude")) p.baseAmplitude = v->num;
+    if (const Json* v = root.find("base_octave")) p.baseOctave = static_cast<int>(v->num);
+    if (const Json* v = root.find("octave_count")) p.octaveCount = static_cast<int>(v->num);
+    if (const Json* mods = root.find("amplitude_modifiers")) {
+        for (const Json& m : mods->arr) p.amplitudeModifiers.push_back(m.num);
+    }
+    return true;
+}
+
+void ProbeNoise(const std::string& outPath, const std::filesystem::path& noiseDir) {
+    const int64_t seeds[] = {0, 42, 1337, -1};
+
+    // PerlinNoise direct: offsets and samples expose permutation/offset bugs.
+    for (int64_t seed : seeds) {
+        mc::XoroshiroRandom random(seed);
+        mc::PerlinNoise perlin(random);
+
+        std::vector<std::string> offsets;
+        offsets.push_back(Bits(perlin.offsetX()));
+        offsets.push_back(Bits(perlin.offsetY()));
+        offsets.push_back(Bits(perlin.offsetZ()));
+        AddNoise("perlin-offsets:" + std::to_string(seed), seed, offsets);
+
+        std::vector<std::string> values;
+        for (int i = 0; i < 96; ++i) {
+            double x, y, z;
+            Point3d(i, x, y, z);
+            values.push_back(Bits(perlin.get(x, y, z)));
+        }
+        AddNoise("perlin3d:" + std::to_string(seed), seed, values);
+
+        values.clear();
+        for (int i = 0; i < 64; ++i) {
+            double x, z;
+            Point2d(i, x, z);
+            values.push_back(Bits(perlin.get(x, 0.0, z)));
+        }
+        AddNoise("perlin2d:" + std::to_string(seed), seed, values);
+    }
+
+    const char* names[] = {
+        "continentalness", "erosion", "ridge", "temperature", "vegetation",
+        "cave_cheese", "aquifer_barrier", "surface", "jagged", "noodle",
+    };
+    for (const char* name : names) {
+        mc::NormalNoise::Parameters params;
+        const std::filesystem::path file = noiseDir / (std::string(name) + ".json");
+        if (!LoadNoiseParameters(file, params)) {
+            std::fprintf(stderr, "cannot read %s\n", file.string().c_str());
+            continue;
+        }
+        mc::NormalNoise normal(params);
+        for (int64_t seed : seeds) {
+            mc::XoroshiroRandom random(seed);
+            std::unique_ptr<mc::Noise> noise = normal.create(random);
+            std::vector<std::string> values;
+            for (int i = 0; i < 128; ++i) {
+                double x, y, z;
+                Point3d(i, x, y, z);
+                values.push_back(Bits(noise->get(x, y, z)));
+            }
+            AddNoise("normal3d:" + std::string(name) + ":" + std::to_string(seed), seed, values);
+        }
+    }
+
+    std::filesystem::path p(outPath);
+    if (p.has_parent_path()) std::filesystem::create_directories(p.parent_path());
+    FILE* f = fopen(outPath.c_str(), "wb");
+    if (!f) {
+        std::fprintf(stderr, "cannot write %s\n", outPath.c_str());
+        return;
+    }
+    std::fprintf(f, "{\n  \"version\":\"26.3\",\n  \"noise\":[\n");
+    for (size_t i = 0; i < g_noise.size(); ++i) {
+        const NoiseEntry& e = g_noise[i];
+        std::fprintf(f, "    {\"name\":\"%s\",\"seed\":\"%lld\",\"values\":[",
+                     e.name.c_str(), static_cast<long long>(e.seed));
+        for (size_t k = 0; k < e.values.size(); ++k) {
+            std::fprintf(f, "%s\"%s\"", k ? "," : "", e.values[k].c_str());
+        }
+        std::fprintf(f, "]}%s\n", i + 1 == g_noise.size() ? "" : ",");
+    }
+    std::fprintf(f, "  ]\n}\n");
+    fclose(f);
+    std::printf("wrote %s (%d entries)\n", outPath.c_str(), static_cast<int>(g_noise.size()));
+}
+
 void ProbeRng(const std::string& outPath) {
     for (int64_t seed : kSeeds) {
         mc::XoroshiroRandom xoroshiro(seed);
@@ -144,12 +272,18 @@ void ProbeRng(const std::string& outPath) {
 int main(int argc, char** argv) {
     std::string probe = "rng";
     std::string out = ".local/probe/rng.json";
+    std::string noiseDir = ".local/noise";
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--probe") == 0 && i + 1 < argc) probe = argv[++i];
         else if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) out = argv[++i];
+        else if (std::strcmp(argv[i], "--noise-dir") == 0 && i + 1 < argc) noiseDir = argv[++i];
     }
     if (probe == "rng") {
         ProbeRng(out);
+        return 0;
+    }
+    if (probe == "noise") {
+        ProbeNoise(out, noiseDir);
         return 0;
     }
     std::fprintf(stderr, "unknown probe '%s'\n", probe.c_str());

@@ -74,7 +74,9 @@ switch ($Command.ToLower()) {
         & (Join-Path $PSScriptRoot 'build-probe.ps1')
         if ($LASTEXITCODE -ne 0) { exit 1 }
         $probeExe = Join-Path $proj 'CraftEngineProbe.exe'
-        & $probeExe --probe $Case --out (Join-Path $proj (".local\probe\{0}.json" -f $Case))
+        $probeArgs = @('--probe', $Case, '--out', (Join-Path $proj (".local\probe\{0}.json" -f $Case)))
+        if ($Case -eq 'noise') { $probeArgs += @('--noise-dir', (Join-Path $proj '.local\noise')) }
+        & $probeExe @probeArgs
         if ($LASTEXITCODE -ne 0) { exit 1 }
         $ok = Compare-Case $Case
         if (-not $ok) { exit 1 }

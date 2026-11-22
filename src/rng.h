@@ -12,6 +12,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace mc {
 
@@ -19,6 +20,33 @@ uint64_t mixStafford13(uint64_t z);
 
 // RandomSupport.upgradeSeedTo128bit: unmixed pair, then Stafford mixing.
 void upgradeSeedTo128bit(int64_t seed, uint64_t& lo, uint64_t& hi);
+
+// RandomSupport.Seed128bit.
+struct Seed128bit {
+    uint64_t lo = 0;
+    uint64_t hi = 0;
+    Seed128bit() = default;
+    Seed128bit(uint64_t l, uint64_t h) : lo(l), hi(h) {}
+    Seed128bit xorWith(uint64_t l, uint64_t h) const { return Seed128bit(lo ^ l, hi ^ h); }
+};
+
+// RandomSupport.seedFromHashOf: MD5 of UTF-8, two big-endian longs.
+Seed128bit seedFromHashOf(const std::string& name);
+
+// Mth.getSeed: the positional seed hash (before the factory XOR).
+int64_t mthGetSeed(int32_t x, int32_t y, int32_t z);
+
+class RandomSource;
+
+// PositionalRandomFactory (net.minecraft.world.level.levelgen.PositionalRandomFactory).
+class PositionalRandomFactory {
+public:
+    virtual ~PositionalRandomFactory() = default;
+    virtual RandomSource* at(int32_t x, int32_t y, int32_t z) = 0;
+    virtual RandomSource* fromHashOf(const std::string& name) = 0;
+    virtual RandomSource* fromSeed(int64_t seed) = 0;
+};
+
 
 // MarsagliaPolarGaussian.nextGaussian: shared by both streams.
 struct MarsagliaPolarGaussian {
@@ -41,6 +69,7 @@ public:
     virtual double nextGaussian() = 0;
     virtual void consumeCount(int32_t count) = 0;
     virtual RandomSource* fork() = 0;
+    virtual PositionalRandomFactory* forkPositional() = 0;
 
     // RandomSource.nextInt(int, int), nextIntBetweenInclusive, triangle.
     int32_t nextInt(int32_t origin, int32_t bound);
@@ -78,6 +107,7 @@ public:
     double nextGaussian() override;
     void consumeCount(int32_t count) override;
     RandomSource* fork() override;
+    PositionalRandomFactory* forkPositional() override;
 
     uint64_t bits(int count);
 
@@ -100,6 +130,7 @@ public:
     double nextGaussian() override;
     void consumeCount(int32_t count) override;
     RandomSource* fork() override;
+    PositionalRandomFactory* forkPositional() override;
 
     // BitRandomSource.next(bits).
     int32_t next(int bits);

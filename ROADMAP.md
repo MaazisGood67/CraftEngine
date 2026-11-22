@@ -34,6 +34,27 @@ Horizon's own status document lists their build order. It is **bottom-up**, not 
 They publish an exact matching-line count per harness (e.g. 15,524,627 lines for density)
 and explicitly say a partial port is **not** "100% parity". We copy that honesty.
 
+### How they worked, in one loop
+
+Horizon never ported a feature by reading it and writing "something similar". Every change
+went through the same loop, and the loop is the whole method:
+
+```
+1. Pick one vanilla class.method (from their port ledger, not from memory)
+2. Decompile that exact method from the pinned jar
+3. Port it literally - constants, branch order, RNG draw order, float vs double
+4. Write a Java oracle that runs the real method on fixed inputs
+5. Write a Rust/C++ probe that runs the port on the same inputs
+6. Diff line by line (millions of lines), fix differences, rerun until zero
+7. Only then move to the next method
+```
+
+They also tracked **how many lines actually match** rather than saying "done", and kept a
+ledger row for every vanilla method with one of four states: missing, partial, port, seam.
+That is why their number is trustworthy: every percent is a diff result, not an opinion.
+
+We run the identical loop with `tools/port-ledger.ps1` + `tools/parity.ps1` + `javap`.
+
 ## Our starting point (honest)
 
 The current build is a **vertical slice**, not a clone. These parts are placeholders and
@@ -56,6 +77,26 @@ is reusable and stays.
 
 ## A-to-Z phases
 
+Horizon's 14 steps map onto our 12 phases one to one; nothing is skipped and nothing is
+moved to the front because it looks good in a screenshot:
+
+| Horizon step | CraftEngine phase | Status |
+|---|---|---|
+| 1 Ground truth | Phase 0 | **done** |
+| 2 Positions/arithmetic | folded into Phases 1-2 (packing tests) | next |
+| 3 Random | Phase 1.1 | **done** (harness PASS) |
+| 4 Noise | Phase 1.2 | in progress |
+| 5 Density functions | Phase 1.3 | - |
+| 6 World data | Phase 10 (saves) + Phase 2 storage | - |
+| 7 Worldgen codecs | Phase 1.4 | - |
+| 8 Biomes | Phase 2.1b | - |
+| 9 Terrain | Phase 2.2-2.4 | - |
+| 10 Features/structures | Phase 2.5-2.6 | - |
+| 11 Gameplay kernels | Phases 4, 6, 7 | - |
+| 12 Client | Phases 3, 5, 9 | - |
+| 13 Integration | Phase 8, 10 | - |
+| 14 Performance | Phase 11 | - |
+
 Every phase ends with a **harness** and a **visible checkpoint**. No phase is "done"
 because it compiles.
 
@@ -72,8 +113,9 @@ because it compiles.
 1.1 Java `Random` + `XoroshiroRandom`: all draw forms, bounded int, fork, seed expansion.
     **DONE** - `src/rng.*`, oracle `tools/oracle/RngOracle.java`, probe `tools/probe/probe.cpp`;
     `tools/parity.ps1 run rng` passes (324 scripted entries, raw float/double bits).
-1.2 `ImprovedNoise`, `PerlinNoise`, `NormalNoise` (octaves, weights, normalization). 26.3 ships
-    `Noise`, `GradientNoise`, `NoiseStack`, `SmearedPerlinNoise`, `NormalNoise`; port from bytecode.
+1.2 `PerlinNoise`, `NoiseStack`, `SmearedPerlinNoise`, `NormalNoise` (octaves, amplitude
+    modifiers, normalization, two-positional-factory seeding). 26.3 has no separate
+    `ImprovedNoise`; `PerlinNoise` extends `GradientNoise`. Port from bytecode.
 1.3 Density functions: read `data/minecraft/worldgen/density_function/*.json`, compile the
     graph, implement every operator and cache.
 1.4 `overworld.json` noise settings: `noise_router`, `sea_level`, `aquifers_enabled`,

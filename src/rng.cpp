@@ -1,6 +1,9 @@
 #include "rng.h"
 
 #include <cmath>
+#include <string>
+
+#include "md5.h"
 
 namespace mc {
 
@@ -14,7 +17,73 @@ constexpr float kFloatUnit = 5.9604645e-8f;            // 2^-24
 inline uint64_t Rotl(uint64_t x, int k) {
     return (x << k) | (x >> (64 - k));
 }
+
+class XoroshiroPositionalFactory final : public PositionalRandomFactory {
+public:
+    XoroshiroPositionalFactory(uint64_t lo, uint64_t hi) : lo_(lo), hi_(hi) {}
+
+    RandomSource* at(int32_t x, int32_t y, int32_t z) override {
+        const int64_t seed = mthGetSeed(x, y, z) ^ static_cast<int64_t>(lo_);
+        return new XoroshiroRandom(seed, static_cast<int64_t>(hi_));
+    }
+
+    RandomSource* fromHashOf(const std::string& name) override {
+        const Seed128bit s = seedFromHashOf(name).xorWith(lo_, hi_);
+        return new XoroshiroRandom(static_cast<int64_t>(s.lo), static_cast<int64_t>(s.hi));
+    }
+
+    RandomSource* fromSeed(int64_t seed) override {
+        return new XoroshiroRandom(seed ^ static_cast<int64_t>(lo_),
+                                   seed ^ static_cast<int64_t>(hi_));
+    }
+
+private:
+    uint64_t lo_;
+    uint64_t hi_;
+};
+
+class LegacyPositionalFactory final : public PositionalRandomFactory {
+public:
+    explicit LegacyPositionalFactory(int64_t seed) : seed_(static_cast<uint64_t>(seed)) {}
+
+    RandomSource* at(int32_t x, int32_t y, int32_t z) override {
+        return new LegacyRandom(mthGetSeed(x, y, z) ^ static_cast<int64_t>(seed_));
+    }
+
+    RandomSource* fromHashOf(const std::string& name) override {
+        // LegacyPositionalRandomFactory uses String.hashCode(), not MD5.
+        int32_t hash = 0;
+        for (unsigned char c : name) hash = 31 * hash + static_cast<int32_t>(c);
+        return new LegacyRandom(static_cast<int64_t>(hash) ^ static_cast<int64_t>(seed_));
+    }
+
+    RandomSource* fromSeed(int64_t seed) override { return new LegacyRandom(seed); }
+
+private:
+    uint64_t seed_;
+};
 } // namespace
+
+Seed128bit seedFromHashOf(const std::string& name) {
+    uint8_t hash[16];
+    md5::digest(name.data(), name.size(), hash);
+    auto bigEndian = [](const uint8_t* p) {
+        uint64_t v = 0;
+        for (int i = 0; i < 8; ++i) v = (v << 8) | p[i];
+        return v;
+    };
+    return Seed128bit(bigEndian(hash), bigEndian(hash + 8));
+}
+
+int64_t mthGetSeed(int32_t x, int32_t y, int32_t z) {
+    // Mth.getSeed: (x*3129871) ^ (z*116129781L) ^ y, then a mix, then >> 16.
+    const int32_t xTerm = static_cast<int32_t>(static_cast<uint32_t>(x) * 3129871u);
+    int64_t l = static_cast<int64_t>(xTerm) ^
+                (static_cast<int64_t>(z) * 116129781LL) ^
+                static_cast<int64_t>(y);
+    l = l * l * 42317861LL + l * 11LL;
+    return l >> 16;
+}
 
 uint64_t mixStafford13(uint64_t z) {
     z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull; // -4658895280553007687
@@ -159,6 +228,12 @@ RandomSource* XoroshiroRandom::fork() {
     return new XoroshiroRandom(lo, hi);
 }
 
+PositionalRandomFactory* XoroshiroRandom::forkPositional() {
+    const uint64_t lo = static_cast<uint64_t>(gen_.nextLong());
+    const uint64_t hi = static_cast<uint64_t>(gen_.nextLong());
+    return new XoroshiroPositionalFactory(lo, hi);
+}
+
 // ---------------------------------------------------------------------------
 // LegacyRandomSource / BitRandomSource
 // ---------------------------------------------------------------------------
@@ -228,6 +303,10 @@ void LegacyRandom::consumeCount(int32_t count) {
 
 RandomSource* LegacyRandom::fork() {
     return new LegacyRandom(nextLong());
+}
+
+PositionalRandomFactory* LegacyRandom::forkPositional() {
+    return new LegacyPositionalFactory(nextLong());
 }
 
 } // namespace mc

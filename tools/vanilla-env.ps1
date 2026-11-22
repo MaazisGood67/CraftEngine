@@ -40,6 +40,7 @@ switch ($Action) {
     'natives'   { $natives }
     'assets'    { $assets }
     'jardir'    { $verDir }
+    'jar'       { $jar }
     default {
         [pscustomobject]@{
             Java = $java
