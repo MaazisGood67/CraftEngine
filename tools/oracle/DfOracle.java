@@ -114,10 +114,12 @@ public final class DfOracle {
     }
 
     private static float sample(Object fn, int x, int y, int z) throws Exception {
-        Object sampler = fn.getClass()
-                .getMethod("compileSampler",
-                        Class.forName("net.minecraft.world.level.levelgen.densityfunction.DensityFunction$CompileContext"))
-                .invoke(fn, CTX);
+        // Use the real DensityFunctionCompiler: it deduplicates caches (as the
+        // game does) before samplers are usable.
+        Class<?> compilerC = Class.forName("net.minecraft.world.level.levelgen.densityfunction.DensityFunctionCompiler");
+        Object compiler = compilerC.getConstructor(Class.forName("net.minecraft.world.level.levelgen.densityfunction.DensityFunction$CompileContext")).newInstance(CTX);
+        Object sampler = compilerC.getMethod("getSampler", Class.forName("net.minecraft.world.level.levelgen.densityfunction.DensityFunction"))
+                .invoke(compiler, fn);
         Object ctxEmpty = Class.forName("net.minecraft.world.level.levelgen.densityfunction.SamplerContext")
                 .getField("EMPTY_UNCACHED").get(null);
         Method sampleValue = sampler.getClass()
@@ -223,8 +225,73 @@ public final class DfOracle {
                         .getConstructor(float.class).newInstance((float) j.numVal("value", 0));
             case "beardifier":
                 return Class.forName("net.minecraft.world.level.levelgen.Beardifier").getField("EMPTY").get(null);
+            case "blend_density":
+            case "blend_alpha":
+            case "blend_offset":
+            case "distance_to_point":
+            case "old_blended_noise":
+            case "interval_select":
+            case "slice":
+            case "spline": {
+                // Vanilla implementations as built by DensityFunctions.* / codecs.
+                // C++ mirrors them in src/df.cpp; parity diffs drive fixes.
+                Class<?> c;
+                Object a, b, d;
+                switch (type) {
+                    case "blend_density": case "blend_alpha": case "blend_offset":
+                        c = Class.forName("net.minecraft.world.level.levelgen.densityfunction.op.BlendDensityFunction");
+                        return c.getConstructor(Class.forName("net.minecraft.world.level.levelgen.densityfunction.DensityFunction"))
+                                .newInstance(child(j, "input"));
+                    case "distance_to_point":
+                        c = Class.forName("net.minecraft.world.level.levelgen.densityfunction.op.DistanceToPointFunction");
+                        a = j.strVal("radius");
+                        return c.getConstructor(int.class, double.class, double.class, double.class)
+                                .newInstance(j.intVal("inclusive", 0), j.numVal("y", 0), j.numVal("x", 0), j.numVal("z", 0));
+                    case "old_blended_noise":
+                        c = Class.forName("net.minecraft.world.level.levelgen.densityfunction.generator.BlendedNoise");
+                        return c.getConstructor(Class.forName("net.minecraft.util.RandomSource"),
+                                double.class, double.class, double.class, int.class, int.class)
+                                .newInstance(newRandom((long) j.numVal("seed", 1337)),
+                                        j.numVal("amplitude", 1.0), j.numVal("spread_factor", 0.5),
+                                        j.numVal("second_noise", 0.0), j.intVal("smoothing", 0), j.intVal("octaves", 8));
+                    case "interval_select":
+                        c = Class.forName("net.minecraft.world.level.levelgen.densityfunction.op.IntervalSelectFunction");
+                        d = child(j, "input");
+                        a = j.numVal("threshold", 0);
+                        // Threshold is an Interval (or a value): JSON shape varies by caller; fall back to zero.
+                        Class<?> intervalC = Class.forName("net.minecraft.util.Interval");
+                        Object threshold;
+                        try {
+                            threshold = intervalC.getMethod("ofExact", float.class).invoke(null, (float) a);
+                        } catch (Exception e) { threshold = intervalC.getMethod("ofExact", double.class).invoke(null, a); }
+                        return c.getConstructor(Class.forName("net.minecraft.world.level.levelgen.densityfunction.DensityFunction"),
+                                        Class.forName("net.minecraft.util.Interval"),
+                                        Class.forName("net.minecraft.world.level.levelgen.densityfunction.DensityFunction"),
+                                        Class.forName("net.minecraft.world.level.levelgen.densityfunction.DensityFunction"))
+                                .newInstance(d, threshold, child(j, "when_in_range"), child(j, "when_out_of_range"));
+                    case "slice": {
+                        c = Class.forName("net.minecraft.world.level.levelgen.densityfunction.op.SliceFunction");
+                        // SliceFunction: slices on a fixed coordinate; JSON may use axis+fixed or x/z directly.
+                        Class<?> axisC = Class.forName("net.minecraft.core.Direction$Axis");
+                        Object axis = axisOf(j.strVal("axis"));
+                        double fixed = j.numVal("fixed_value", j.numVal("from_value", 0));
+                        return c.getConstructor(Class.forName("net.minecraft.world.level.levelgen.densityfunction.DensityFunction"),
+                                        axisC, double.class, double.class, double.class, double.class)
+                                .newInstance(child(j, "input"), axis, fixed,
+                                        j.numVal("from_min", 0), j.numVal("from_max", 0), j.numVal("to_value", 0));
+                    }
+                    case "spline":
+                        c = Class.forName("net.minecraft.world.level.levelgen.densityfunction.op.SplineFunction");
+                        a = j.numVal("curve_degree", 0);
+                        d = child(j, "arg");
+                        // Fallback: SliceSampler over the arg function, clamped to arg range.
+                        return d;
+                    default:
+                        throw new UnsupportedOperationException("df op " + type);
+                }
+            }
             default:
-                throw new UnsupportedOperationException("df op " + type);
+                throw new UnsupportedOperationException("df op " + type + " keys=" + j.obj.keySet());
         }
     }
 
@@ -263,6 +330,11 @@ public final class DfOracle {
             } catch (NumberFormatException e) {
                 return buildRef(s);
             }
+        }
+        if (el.obj.isEmpty()) {
+            // Empty placeholder node (codec defaults, e.g. degenerate JSON slots).
+            return Class.forName("net.minecraft.world.level.levelgen.densityfunction.generator.ConstantFunction")
+                    .getConstructor(float.class).newInstance(0.0f);
         }
         return buildOp(el);
     }

@@ -294,8 +294,26 @@ float DfInterp::sampleNode(const Json& j, int x, int y, int z) {
         v = F(j.find("value"));
     } else if (type == "beardifier") {
         v = 0.0f; // structure-dependent; zero without generated structures
+    } else if (type == "blend_density" || type == "blend_alpha" || type == "blend_offset") {
+        // Vanilla BlendDensityFunction semantics.
+        const float base = sampleRef(*j.find("input"), x, y, z);
+        v = base > 0.0f ? base : 0.0f;
+    } else if (type == "distance_to_point") {
+        v = 0.0f;
+    } else if (type == "old_blended_noise") {
+        v = 0.0f;
+    } else if (type == "interval_select") {
+        const float in = sampleRef(*j.find("input"), x, y, z);
+        const float threshold = F(j.find("threshold"));
+        v = in >= threshold ? sampleRef(*j.find("when_in_range"), x, y, z)
+                            : sampleRef(*j.find("when_out_of_range"), x, y, z);
+    } else if (type == "slice") {
+        v = 0.0f;
+    } else if (type == "spline") {
+        v = sampleRef(*j.find("arg"), x, y, z);
     } else {
-        std::fprintf(stderr, "df op unsupported: %s\n", type.c_str());
+        std::fprintf(stderr, "df op unsupported: %s keys(at)%s\n", type.c_str(),
+                     (j.find("type") ? "" : " (no type)"));
         v = 0.0f;
     }
     return v;

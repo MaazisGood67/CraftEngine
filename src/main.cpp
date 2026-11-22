@@ -553,6 +553,40 @@ static void applySlider(int id, float mx) {
     }
 }
 
+static void handleUiClick(float mx, float my);
+static void handleInventoryClick(float mx, float my) {
+    // Hotbar row (matches the draw geometry: hx = -91 of 920, each button 20 wide + 4).
+    const float hx = g_guiW * 0.5f - 91.0f;
+    const float hy = static_cast<float>(g_guiH) - 22.0f;
+    for (int i = 0; i < 9; ++i) {
+        const float bx = hx - 1.0f + i * 20.0f;
+        if (mx >= bx && mx < bx + 24.0f && my >= hy - 1.0f && my < hy - 1.0f + 23.0f) {
+            g_inventory.selected = static_cast<uint16_t>(i);
+            playClick();
+            return;
+        }
+    }
+    // Main inventory slots: 3 rows of 9 above the hotbar.
+    const float mx0 = 104.0f, my0 = 62.0f;
+    for (int i = 0; i < 27; ++i) {
+        const float sx = mx0 + (i % 9) * 20.0f;
+        const float sy = my0 + (i / 9) * 20.0f;
+        if (mx >= sx && mx < sx + 20.0f && my >= sy && my < sy + 20.0f) {
+            const int sel = g_inventory.selected;
+            ItemStack& selSlot = g_inventory.slots[sel];
+            ItemStack& clickSlot = g_inventory.slots[9 + i];
+            if (clickSlot.empty()) {
+                std::swap(selSlot, clickSlot);
+            } else if (selSlot.empty()) {
+                std::swap(selSlot, clickSlot);
+            } else {
+                g_inventory.swap(sel, 9 + i);
+            }
+            playClick();
+            return;
+        }
+    }
+}
 static void handleUiClick(float mx, float my) {
     for (const UiButton& b : g_ui) {
         if (!inside(mx, my, b)) continue;
@@ -1253,6 +1287,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_mouseY = GET_Y_LPARAM(lp);
             if (g_state == State::InGame && g_captured) {
                 if (!attackMobTry()) breakBlock();
+            } else if (g_state == State::InGame && g_inventoryOpen) {
+                handleInventoryClick(mouseGuiX(), mouseGuiY());
             } else if (g_state != State::InGame) handleUiClick(mouseGuiX(), mouseGuiY());
             return 0;
         case WM_RBUTTONDOWN:
