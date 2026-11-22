@@ -86,7 +86,7 @@ moved to the front because it looks good in a screenshot:
 | 2 Positions/arithmetic | folded into Phases 1-2 (packing tests) | next |
 | 3 Random | Phase 1.1 | **done** (harness PASS) |
 | 4 Noise | Phase 1.2 | in progress |
-| 5 Density functions | Phase 1.3 | - |
+| 5 Density functions | Phase 1.3 | **done** (df harness PASS) |
 | 6 World data | Phase 10 (saves) + Phase 2 storage | - |
 | 7 Worldgen codecs | Phase 1.4 | - |
 | 8 Biomes | Phase 2.1b | - |
@@ -116,8 +116,11 @@ because it compiles.
 1.2 `PerlinNoise`, `NoiseStack`, `SmearedPerlinNoise`, `NormalNoise` (octaves, amplitude
     modifiers, normalization, two-positional-factory seeding). 26.3 has no separate
     `ImprovedNoise`; `PerlinNoise` extends `GradientNoise`. Port from bytecode.
+    **DONE** - `parity.ps1 compare noise` PASS (52 entries, exact bits).
 1.3 Density functions: read `data/minecraft/worldgen/density_function/*.json`, compile the
     graph, implement every operator and cache.
+    **DONE** - `parity.ps1 compare df` PASS (192/192 samples, exact bits): all 8 router keys
+    and all 27 shared noises. Notable 26.3 rules found by diff, see the table above.
 1.4 `overworld.json` noise settings: `noise_router`, `sea_level`, `aquifers_enabled`,
     `default_fluid`, `noise.size_vertical/horizontal`.
 - **Harness:** `tools/oracle/WorldgenOracle.java` vs `CraftEngineProbe.exe --probe worldgen`,
@@ -245,6 +248,8 @@ packaging, installer, release notes. Performance work never changes behaviour.
 | 2026-11-22 | Noise port | `parity.ps1 compare noise` | **PASS** - 52 entries, exact bits |
 | 2026-11-22 | Density functions: shifted noise, CubicSpline, InterpolatedFunction, shared per-id Noise, ShiftB axis fix, interval_select build order | `parity.ps1 compare df` | **6 of 8 router keys bit-exact** (continents, depth, erosion, ridges, temperature, vegetation); all 27 shared noises bit-exact. `final_density` + `chunk_surface_level` still fail: `old_blended_noise` (BlendedNoise) is not ported yet. |
 
+| 2026-11-22 | Density functions **PASS** | `parity.ps1 compare df` | **192/192 samples bit-exact** - all 8 overworld router keys (chunk_surface_level, continents, depth, erosion, final_density, ridges, temperature, vegetation) and all 27 shared noise instances. |
+
 ### Density harness: what the diffs proved
 
 Every fix below was found by a diff, not by reading and guessing:
@@ -266,6 +271,13 @@ Every fix below was found by a diff, not by reading and guessing:
    (identical parameters, different ids) collapsed into one instance. Now `IdentityHashMap`.
 8. `interval_select` children are built input-first (vanilla codec order), which is what decides
    the shared-RNG noise seeds.
+9. `half_negative` / `quarter_negative` are `LeakyReLUSampler` in 26.3: `x > 0 ? x : x*factor`.
+   The port damped the positive side instead - a real terrain bug, not a rounding bug.
+10. `squeeze` changed shape: 26.3 is `clamp(x,-1,1)/2 - cube/24`, not `c*(3-c^2)/2`.
+11. `LerpFunction$Sampler` short-circuits at `alpha == 0` and `alpha == 1`. Without that,
+    `first + 1.0f*(second-first)` differs from `second` by 1 ULP, which showed up as 4 diffs.
+12. `BlendedNoise`/`SmearedPerlinNoise` (`old_blended_noise`) ported: 3 Fbm stacks, 16/8 octaves,
+    `computeFudgeY`, and gradient dots using the fudged dy while the smoothstep uses the raw dy.
 
 Attribution is reproducible: `CraftEngineProbe.exe --probe noises` dumps every shared `Noise` at
 (0,0,0) in creation order, and `java DfDebug noises` writes the same JSON from the real jar.

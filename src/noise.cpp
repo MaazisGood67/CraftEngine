@@ -83,7 +83,8 @@ float PerlinNoise::get(double x, double y, double z) const {
     return sampleAndLerp(ix, iy, iz, fx, fy, fz);
 }
 
-float PerlinNoise::sampleAndLerp(int x, int y, int z, float dx, float dy, float dz) const {
+float PerlinNoise::sampleAndLerp(int x, int y, int z, float dx, float dy, float dz,
+                                float dyForLerp) const {
     const int p0 = permute(x);
     const int p1 = permute(x + 1);
     const int p00 = permute(p0 + y);
@@ -103,10 +104,44 @@ float PerlinNoise::sampleAndLerp(int x, int y, int z, float dx, float dy, float 
         dx - 1.0f, dy - 1.0f, dz - 1.0f);
 
     const float sx = smoothstep(dx);
-    const float sy = smoothstep(dy);
+    const float sy = smoothstep(dyForLerp);
     const float sz = smoothstep(dz);
 
     return lerp3(sx, sy, sz, g000, g100, g010, g110, g001, g101, g011, g111);
+}
+
+// ---------------------------------------------------------------------------
+// SmearedPerlinNoise
+// ---------------------------------------------------------------------------
+namespace {
+constexpr double kShiftUpEpsilon = 1.0000000116860974E-7;
+}
+
+SmearedPerlinNoise::SmearedPerlinNoise(RandomSource& random, double smearScale)
+    : PerlinNoise(random), fudgeYScale_(smearScale) {}
+
+double SmearedPerlinNoise::computeFudgeY(double y, double dyFraction) const {
+    // if (y >= 0 && y < dyFraction) use y, else use dyFraction; then snap to the
+    // fudge grid (SmearedPerlinNoise.computeFudgeY).
+    const double base = (y >= 0.0 && y < dyFraction) ? y : dyFraction;
+    return std::floor(base / fudgeYScale_ + kShiftUpEpsilon) * fudgeYScale_;
+}
+
+float SmearedPerlinNoise::get(double x, double y, double z) const {
+    const double wx = wrapDouble(x) + offsetX();
+    const double wy = wrapDouble(y) + offsetY();
+    const double wz = wrapDouble(z) + offsetZ();
+
+    const int ix = static_cast<int>(std::floor(wx));
+    const int iy = static_cast<int>(std::floor(wy));
+    const int iz = static_cast<int>(std::floor(wz));
+
+    const float fx = static_cast<float>(wx - static_cast<double>(ix));
+    const double fy = wy - static_cast<double>(iy);
+    const float fz = static_cast<float>(wz - static_cast<double>(iz));
+
+    const float fudged = static_cast<float>(fy - computeFudgeY(y, fy));
+    return sampleAndLerp(ix, iy, iz, fx, fudged, fz, static_cast<float>(fy));
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +261,76 @@ std::unique_ptr<Noise> NormalNoise::create(RandomSource& random) const {
     result->stack = std::make_unique<NoiseStack>(std::move(layers));
     result->owned = std::move(owned);
     return result;
+}
+
+// ---------------------------------------------------------------------------
+// BlendedNoise (old_blended_noise)
+// ---------------------------------------------------------------------------
+namespace {
+constexpr double kBlendedScale = 684.412;          // BlendedNoise.xzMultiplier/yMultiplier constant
+constexpr double kLimitSmear = 0.9999847412109375; // createFbmSet limit-noise argument
+constexpr double kMainSmear = 12.75;               // createFbmSet main-noise argument
+constexpr int kLimitFirstOctave = -15;
+constexpr int kMainFirstOctave = -7;
+
+// Keeps the SmearedPerlinNoise layers alive for a NoiseStack that only stores raw pointers.
+struct OwnedStack final : Noise {
+    std::vector<std::unique_ptr<Noise>> owned;
+    std::unique_ptr<NoiseStack> stack;
+    float get(double x, double y, double z) const override { return stack->get(x, y, z); }
+    float get(double x, double z) const override { return stack->get(x, z); }
+};
+} // namespace
+
+std::unique_ptr<Noise> BlendedNoise::createFbm(RandomSource& random, int firstOctave,
+                                              double smear, double scale) {
+    // BlendedNoise.createFbm(RandomSource, int firstOctave, double smear, double scale)
+    const int count = -firstOctave + 1;
+    double frequency = 1.0;
+    double amplitude = scale / (std::pow(2.0, static_cast<double>(count)) - 1.0);
+
+    std::vector<NoiseStack::Layer> layers;
+    auto owned = std::make_unique<OwnedStack>();
+    for (int i = count - 1; i >= 0; --i) {
+        auto smeared = std::make_unique<SmearedPerlinNoise>(random, smear * frequency);
+        layers.push_back({smeared.get(), frequency, static_cast<float>(amplitude)});
+        owned->owned.push_back(std::move(smeared));
+        frequency /= 2.0;
+        amplitude *= 2.0;
+    }
+    owned->stack = std::make_unique<NoiseStack>(std::move(layers));
+    return owned;
+}
+
+BlendedNoise::BlendedNoise(RandomSource& random, double xzScale, double yScale,
+                           double xzFactor, double yFactor, double smearScaleMultiplier)
+    : xzMultiplier_(kBlendedScale * xzScale),
+      yMultiplier_(kBlendedScale * yScale),
+      xzFactor_(xzFactor),
+      yFactor_(yFactor) {
+    // createFbmSet: the two limit stacks share the smeared y multiplier; the main
+    // stack uses it divided by yFactor. Order of creation decides the seeds.
+    const double limitSmear = yMultiplier_ * smearScaleMultiplier;
+    const double mainSmear = limitSmear / yFactor_;
+    minLimit_ = createFbm(random, kLimitFirstOctave, limitSmear, kLimitSmear);
+    maxLimit_ = createFbm(random, kLimitFirstOctave, limitSmear, kLimitSmear);
+    main_ = createFbm(random, kMainFirstOctave, mainSmear, kMainSmear);
+}
+
+float BlendedNoise::get(double x, double y, double z) const {
+    // BlendedNoise.compileSampler(RandomSource):
+    //   min/max limit sampled at (x*xzMultiplier, y*yMultiplier, z*xzMultiplier)
+    //   main sampled at (x*xzMultiplier/xzFactor, y*yMultiplier/yFactor, ...)
+    //   alpha = clamp(main + 0.5, 0, 1); result = lerp(alpha, min, max)
+    const float minV = minLimit_->get(x * xzMultiplier_, y * yMultiplier_, z * xzMultiplier_);
+    const float maxV = maxLimit_->get(x * xzMultiplier_, y * yMultiplier_, z * xzMultiplier_);
+    const float mainV = main_->get(x * xzMultiplier_ / xzFactor_,
+                                   y * yMultiplier_ / yFactor_,
+                                   z * xzMultiplier_ / xzFactor_);
+    float alpha = mainV + 0.5f;
+    if (alpha < 0.0f) alpha = 0.0f;
+    if (alpha > 1.0f) alpha = 1.0f;
+    return minV + alpha * (maxV - minV);
 }
 
 } // namespace mc

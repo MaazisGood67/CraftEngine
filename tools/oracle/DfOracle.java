@@ -80,6 +80,9 @@ public final class DfOracle {
         for (String key : ROUTER_KEYS) buildRef("overworld/" + key);
     }
 
+    /** Debug hook (DfDebug): build+sample an arbitrary DF JSON snippet. */
+    static Object debugBuildValue(MiniJson.Json el) throws Exception { return buildValue(el); }
+
     static Object debugBuildRef(String id) throws Exception { return buildRef(id); }
 
     static float debugSample(Object fn, int x, int y, int z) throws Exception { return sample(fn, x, y, z); }
@@ -164,6 +167,9 @@ public final class DfOracle {
                 .getMethod("sampleValue",
                         Class.forName("net.minecraft.world.level.levelgen.densityfunction.SamplerContext"),
                         int.class, int.class, int.class);
+        // Several samplers (e.g. InterpolatedFunction$Sampler) are package-private
+        // classes with a public method; reflection needs explicit access.
+        sampleValue.setAccessible(true);
         return (Float) sampleValue.invoke(sampler, ctxEmpty, x, y, z);
     }
 

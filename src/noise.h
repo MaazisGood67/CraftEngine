@@ -57,14 +57,60 @@ public:
     double offsetY() const { return offsetY_; }
     double offsetZ() const { return offsetZ_; }
 
+protected:
+    // PerlinNoise.sampleAndLerp(int,int,int,float,float,float,float): the gradient
+    // dots use (dx,dy,dz), but the y smoothstep uses the 7th float. Plain Perlin
+    // passes dy twice; SmearedPerlinNoise passes the un-fudged dy for the lerp.
+    float sampleAndLerp(int x, int y, int z, float dx, float dy, float dz,
+                        float dyForLerp) const;
+    float sampleAndLerp(int x, int y, int z, float dx, float dy, float dz) const {
+        return sampleAndLerp(x, y, z, dx, dy, dz, dy);
+    }
+
 private:
     int permute(int index) const { return perms_[index & 255] & 255; }
-    float sampleAndLerp(int x, int y, int z, float dx, float dy, float dz) const;
 
     uint8_t perms_[256];
     double offsetX_ = 0.0;
     double offsetY_ = 0.0;
     double offsetZ_ = 0.0;
+};
+
+// SmearedPerlinNoise (net.minecraft.world.level.levelgen.synth.SmearedPerlinNoise):
+// Perlin with a y "fudge" so that the blended-noise octaves stay continuous across
+// cell boundaries. Ported from SmearedPerlinNoise.txt.
+class SmearedPerlinNoise : public PerlinNoise {
+public:
+    SmearedPerlinNoise(RandomSource& random, double smearScale);
+
+    float get(double x, double y, double z) const override;
+
+private:
+    double computeFudgeY(double y, double dyFraction) const;
+
+    double fudgeYScale_ = 0.0;
+};
+
+// BlendedNoise (net.minecraft.world.level.levelgen.synth.BlendedNoise), the
+// `old_blended_noise` density function. Ported from BlendedNoise.txt.
+class BlendedNoise : public Noise {
+public:
+    BlendedNoise(RandomSource& random, double xzScale, double yScale, double xzFactor,
+                 double yFactor, double smearScaleMultiplier);
+
+    float get(double x, double y, double z) const override;
+
+private:
+    static std::unique_ptr<Noise> createFbm(RandomSource& random, int firstOctave,
+                                            double smear, double scale);
+
+    double xzMultiplier_ = 0.0;
+    double yMultiplier_ = 0.0;
+    double xzFactor_ = 1.0;
+    double yFactor_ = 1.0;
+    std::unique_ptr<Noise> minLimit_;
+    std::unique_ptr<Noise> maxLimit_;
+    std::unique_ptr<Noise> main_;
 };
 
 // NoiseStack: sum(amplitude * noise.get(x*frequency, y*frequency, z*frequency)).

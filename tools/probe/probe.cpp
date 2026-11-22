@@ -329,6 +329,42 @@ int main(int argc, char** argv) {
         ProbeDf(out, dfDir, noiseDirPath);
         return 0;
     }
+    if (probe == "sample") {
+        const std::filesystem::path noiseDirPath(noiseDir);
+        const std::filesystem::path dfDir = noiseDirPath.parent_path() / "df";
+        std::string id = "overworld/final_density";
+        std::string dfFile;
+        int sx = 0, sy = 0, sz = 0;
+        for (int i = 1; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--df") == 0 && i + 1 < argc) id = argv[++i];
+            else if (std::strcmp(argv[i], "--df-file") == 0 && i + 1 < argc) dfFile = argv[++i];
+            else if (std::strcmp(argv[i], "--x") == 0 && i + 1 < argc) sx = std::atoi(argv[++i]);
+            else if (std::strcmp(argv[i], "--y") == 0 && i + 1 < argc) sy = std::atoi(argv[++i]);
+            else if (std::strcmp(argv[i], "--z") == 0 && i + 1 < argc) sz = std::atoi(argv[++i]);
+        }
+        mc::DfInterp interp(dfDir, noiseDirPath);
+        const char* names[] = {
+            "overworld/chunk_surface_level", "overworld/continents", "overworld/depth",
+            "overworld/erosion", "overworld/final_density", "overworld/ridges",
+            "overworld/temperature", "overworld/vegetation",
+        };
+        std::vector<std::string> keys(names, names + 8);
+        float v;
+        if (!dfFile.empty()) {
+            std::string text;
+            if (!ReadFile(dfFile, text)) {
+                std::fprintf(stderr, "cannot read %s\n", dfFile.c_str());
+                return 2;
+            }
+            v = interp.sampleJsonText(text, keys, sx, sy, sz);
+            std::printf("%s(%d,%d,%d) = %.9g\n", dfFile.c_str(), sx, sy, sz,
+                        static_cast<double>(v));
+            return 0;
+        }
+        v = interp.sampleById(id, keys, sx, sy, sz);
+        std::printf("%s(%d,%d,%d) = %.9g\n", id.c_str(), sx, sy, sz, static_cast<double>(v));
+        return 0;
+    }
     if (probe == "noises") {
         const std::filesystem::path noiseDirPath(noiseDir);
         const std::filesystem::path dfDir = noiseDirPath.parent_path() / "df";

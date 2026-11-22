@@ -192,6 +192,17 @@ void DfInterp::buildOp(const Json& j) {
         }
         return;
     }
+    if (name == "old_blended_noise") {
+        // BlendedNoise.compileSampler calls ctx.createRandom(NOISE_SEED); the oracle
+        // hands back a fresh XoroshiroRandomSource(1337) for it, so the stack seeds
+        // are fixed and can be built once per node.
+        XoroshiroRandom blendedRandom(1337);
+        blendedByNode[&j] = std::make_unique<BlendedNoise>(
+                blendedRandom, D(j.find("xz_scale")), D(j.find("y_scale")),
+                D(j.find("xz_factor")), D(j.find("y_factor")),
+                D(j.find("smear_scale_multiplier")));
+        return;
+    }
     if (name == "slice") { buildChild(j, "input"); return; }
     if (name == "spline") {
         if (const Json* sp = j.find("spline")) buildSpline(*sp);
@@ -298,7 +309,7 @@ float DfInterp::sampleNode(const Json& j, int x, int y, int z) {
         const char* e = std::getenv("MC_DF_TRACE");
         return e && *e && *e != '0';
     }();
-    static int traceBudget = 2048;
+    static int traceBudget = 4096;
     const std::string type = TypeOf(j);
     const double xd = static_cast<double>(x);
     const double yd = static_cast<double>(y);
@@ -329,20 +340,24 @@ float DfInterp::sampleNode(const Json& j, int x, int y, int z) {
     } else if (type == "cube") {
         const float a = ref(j, "input", x, y, z);
         v = a * a * a;
-    } else if (type == "half_negative") {
+    } else if (type == "half_negative" || type == "quarter_negative") {
+        // 26.3 maps these to UnaryFunction$LeakyReLUSampler with negativeFactor 0.5f / 0.25f:
+        //   apply(x) = x > 0 ? x : x * negativeFactor   (UnaryFunction$LeakyReLUSampler.txt)
+        // i.e. the NEGATIVE side is damped, not the positive one.
         const float a = ref(j, "input", x, y, z);
-        v = a <= 0.0f ? a : a / 2.0f;
-    } else if (type == "quarter_negative") {
-        const float a = ref(j, "input", x, y, z);
-        v = a <= 0.0f ? a : a / 4.0f;
+        const float factor = type == "half_negative" ? 0.5f : 0.25f;
+        v = a > 0.0f ? a : a * factor;
     } else if (type == "negate") {
         v = -ref(j, "input", x, y, z);
     } else if (type == "reciprocal") {
         v = 1.0f / ref(j, "input", x, y, z);
     } else if (type == "squeeze") {
+        // 26.3 UnaryFunction$SqueezeSampler.apply(float):
+        //   f = Mth.clamp(x, -1, 1); return f/2 - Mth.cube(f)/24
+        // (not the pre-1.21 c*(3-c^2)/2 form).
         const float a = ref(j, "input", x, y, z);
-        const float b = a < -1.0f ? -1.0f : (a > 1.0f ? 1.0f : a);
-        v = b * (3.0f - b * b) / 2.0f;
+        const float c = a < -1.0f ? -1.0f : (a > 1.0f ? 1.0f : a);
+        v = c / 2.0f - (c * c * c) / 24.0f;
     } else if (type == "log") {
         v = std::log(ref(j, "input", x, y, z));
     } else if (type == "sign") {
@@ -354,10 +369,20 @@ float DfInterp::sampleNode(const Json& j, int x, int y, int z) {
         const float hi = F(j.find("max"));
         v = a < lo ? lo : (a > hi ? hi : a);
     } else if (type == "lerp") {
+        // LerpFunction$Sampler.sampleValue short-circuits: alpha == 0 returns `first`,
+        // alpha == 1 returns `second`, otherwise Mth.lerp(alpha, first, second).
+        // The shortcut matters: `first + 1.0f*(second-first)` is not bit-identical
+        // to `second` in float arithmetic.
         const float alpha = ref(j, "alpha", x, y, z);
-        const float first = ref(j, "first", x, y, z);
-        const float second = ref(j, "second", x, y, z);
-        v = first + alpha * (second - first);
+        if (alpha == 0.0f) {
+            v = ref(j, "first", x, y, z);
+        } else if (alpha == 1.0f) {
+            v = ref(j, "second", x, y, z);
+        } else {
+            const float first = ref(j, "first", x, y, z);
+            const float second = ref(j, "second", x, y, z);
+            v = Lerp(alpha, first, second);
+        }
     } else if (type == "range_choice") {
         const float in = ref(j, "input", x, y, z);
         const float lo = F(j.find("min_inclusive"));
@@ -497,7 +522,16 @@ float DfInterp::sampleNode(const Json& j, int x, int y, int z) {
     } else if (type == "distance_to_point") {
         v = 0.0f;
     } else if (type == "old_blended_noise") {
-        v = 0.0f;
+        // Built in buildOp (the stack seeds come from a fresh RandomSource(1337)).
+        auto it = blendedByNode.find(&j);
+        v = (it != blendedByNode.end() && it->second)
+                ? it->second->get(xd, yd, zd)
+                : 0.0f;
+        if (trace && traceBudget > 0) {
+            --traceBudget;
+            std::fprintf(stderr, "TRACE blended at (%d,%d,%d) -> %.9g\n", x, y, z,
+                         static_cast<double>(v));
+        }
     } else if (type == "interval_select") {
         // Verified from IntervalSelectFunction$Sampler.selectSamplerIndex bytecode:
         // choose the first function whose threshold is strictly greater than the
@@ -595,6 +629,28 @@ void DfInterp::dumpNoises(const std::string& outPath, const std::vector<std::str
     std::fprintf(f, "  ]\n}\n");
     fclose(f);
     std::printf("wrote %s (%d noises)\n", outPath.c_str(), static_cast<int>(noiseOrder_.size()));
+}
+
+float DfInterp::sampleById(const std::string& id, const std::vector<std::string>& routerKeys,
+                           int x, int y, int z) {
+    XoroshiroRandom random(1337);
+    this->rng = &random;
+    for (const std::string& key : routerKeys) buildRef(key);
+    buildRef(id);
+    const Json* j = file(id);
+    return j ? sampleNode(*j, x, y, z) : 0.0f;
+}
+
+float DfInterp::sampleJsonText(const std::string& jsonText,
+                               const std::vector<std::string>& routerKeys, int x, int y, int z) {
+    XoroshiroRandom random(1337);
+    this->rng = &random;
+    for (const std::string& key : routerKeys) buildRef(key);
+
+    Json extra;
+    if (!ParseJson(jsonText, extra)) return 0.0f;
+    buildOp(extra);
+    return sampleNode(extra, x, y, z);
 }
 
 } // namespace mc

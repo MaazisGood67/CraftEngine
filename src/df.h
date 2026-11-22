@@ -31,6 +31,16 @@ struct DfInterp {
     void dumpNoises(const std::string& outPath, const std::vector<std::string>& routerKeys,
                     double px, double py, double pz);
 
+    // Debug: build the router (for RNG parity) and sample one density function by
+    // id. Lets the harness bisect a mismatch down the graph instead of guessing.
+    float sampleById(const std::string& id, const std::vector<std::string>& routerKeys,
+                     int x, int y, int z);
+
+    // Debug: sample an arbitrary density-function JSON snippet (inline expression),
+    // so a mismatch can be narrowed to one sub-expression on both sides.
+    float sampleJsonText(const std::string& jsonText, const std::vector<std::string>& routerKeys,
+                         int x, int y, int z);
+
     std::map<std::string, Json> files;
     // Java creates a separate Noise for every occurrence of a noise node, all
     // from the same RandomSource(1337). Ownership is kept here; sampling uses
@@ -40,6 +50,8 @@ struct DfInterp {
     // One Noise per noise id, shared by all referencing nodes (RandomState.getOrCreateNoise).
     std::map<std::string, Noise*> noiseById_;
     std::vector<std::string> noiseOrder_; // noise ids in creation order
+    // old_blended_noise nodes own a BlendedNoise built during the build pass.
+    std::map<const Json*, std::unique_ptr<Noise>> blendedByNode;
     RandomSource* rng = nullptr;
 
 private:

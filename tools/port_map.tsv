@@ -62,3 +62,9 @@ net.minecraft.util.CubicSpline$Multipoint	sample	src/df.cpp	sampleSpline	port	ve
 net.minecraft.world.level.levelgen.densityfunction.op.IntervalSelectFunction	compileSampler	src/df.cpp	sampleNode(interval_select)	port	first threshold > input wins, else last function
 net.minecraft.world.level.levelgen.densityfunction.generator.FindTopSurfaceFunction$Sampler	findSurfaceFrom	src/df.cpp	sampleNode(find_top_surface)	partial	scans down from floor(upper/cell)*cell
 net.minecraft.world.level.levelgen.synth.BlendedNoise	compileSampler	src/df.cpp	sampleNode(old_blended_noise)	missing	still returns 0; blocks final_density + chunk_surface_level
+net.minecraft.world.level.levelgen.synth.BlendedNoise	compileSampler	src/noise.cpp	BlendedNoise::get	port	3 FbmStacks; limit -15 octaves, main -7; alpha=clamp(main+0.5)
+net.minecraft.world.level.levelgen.synth.BlendedNoise	createFbm	src/noise.cpp	BlendedNoise::createFbm	port	16/8 SmearedPerlinNoise layers, frequency halving
+net.minecraft.world.level.levelgen.synth.SmearedPerlinNoise	get	src/noise.cpp	SmearedPerlinNoise::get	port	computeFudgeY; gradient dots use fudged dy, smoothstep uses raw dy
+net.minecraft.world.level.levelgen.densityfunction.op.UnaryFunction$LeakyReLUSampler	apply	src/df.cpp	sampleNode(half_negative/quarter_negative)	port	x > 0 ? x : x*factor — the NEGATIVE side is damped
+net.minecraft.world.level.levelgen.densityfunction.op.UnaryFunction$SqueezeSampler	apply	src/df.cpp	sampleNode(squeeze)	port	26.3 form: clamp(x,-1,1)/2 - cube/24
+net.minecraft.world.level.levelgen.densityfunction.op.LerpFunction$Sampler	sampleValue	src/df.cpp	sampleNode(lerp)	port	alpha==0 -> first, alpha==1 -> second, else Mth.lerp

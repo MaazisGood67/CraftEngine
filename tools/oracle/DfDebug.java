@@ -17,6 +17,21 @@ public final class DfDebug {
             DfOracle.debugDumpNoises(0.0, 0.0, 0.0);
             return;
         }
+        if (args.length > 0 && args[0].equals("file")) {
+            // file <path> <x> <y> <z>: sample an inline DF JSON snippet.
+            String path = args[1];
+            int fx = Integer.parseInt(args[2]);
+            int fy = Integer.parseInt(args[3]);
+            int fz = Integer.parseInt(args[4]);
+            DfOracle.init();
+            DfOracle.buildWholeRouter();
+            java.nio.file.Path p = java.nio.file.Path.of(path);
+            Object fn = DfOracle.debugBuildValue(
+                    MiniJson.parse(java.nio.file.Files.readString(p, java.nio.charset.StandardCharsets.UTF_8)));
+            System.out.printf("%s(%d,%d,%d) = %.9g%n", path, fx, fy, fz,
+                    DfOracle.debugSample(fn, fx, fy, fz));
+            return;
+        }
         int x = Integer.parseInt(args[0]);
         int y = Integer.parseInt(args[1]);
         int z = Integer.parseInt(args[2]);
