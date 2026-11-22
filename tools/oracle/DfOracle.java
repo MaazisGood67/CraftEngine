@@ -27,7 +27,10 @@ import java.util.Map;
 public final class DfOracle {
     private static final Map<String, MiniJson.Json> FILES = new LinkedHashMap<>();
     private static final Map<String, Object> FNS = new LinkedHashMap<>();
-    private static final Map<Object, Object> SYNTH_BY_NOISE = new LinkedHashMap<>();
+    // Identity map: two NormalNoise objects with identical parameters are distinct
+    // instances and must not collapse (equals-based maps did exactly that).
+    private static final Map<Object, Object> SYNTH_BY_NOISE = new java.util.IdentityHashMap<>();
+    private static final Map<String, Object> NORMAL_BY_ID = new LinkedHashMap<>();
     private static final List<String> ROUTER_KEYS = List.of(
             "chunk_surface_level", "continents", "depth", "erosion", "final_density",
             "ridges", "temperature", "vegetation");
@@ -61,16 +64,48 @@ public final class DfOracle {
 
     private static Object random; // PositionalRandomFactory
 
-    public static void main(String[] args) throws Exception {
+    /** Bootstrap the game classes and the shared 1337 RandomSource (idempotent). */
+    public static void init() throws Exception {
         try {
             Class.forName("net.minecraft.SharedConstants").getMethod("tryDetectVersion").invoke(null);
             Class.forName("net.minecraft.server.Bootstrap").getMethod("bootStrap").invoke(null);
         } catch (Throwable t) {
             System.err.println("bootstrap: " + t);
         }
-        String outPath = args.length > 0 ? args[0] : "df.json";
+        if (random == null) random = newRandom(1337L);
+    }
 
-        random = newRandom(1337L);
+    /** Debug hook (DfDebug): build the whole router graph so RNG order matches. */
+    static void buildWholeRouter() throws Exception {
+        for (String key : ROUTER_KEYS) buildRef("overworld/" + key);
+    }
+
+    static Object debugBuildRef(String id) throws Exception { return buildRef(id); }
+
+    static float debugSample(Object fn, int x, int y, int z) throws Exception { return sample(fn, x, y, z); }
+
+    /** Debug hook (DfDebug): sample every shared Noise in creation order. */
+    static void debugDumpNoises(double px, double py, double pz) throws Exception {
+        Method get = Class.forName("net.minecraft.world.level.levelgen.synth.Noise")
+                .getMethod("get", double.class, double.class, double.class);
+        StringBuilder sb = new StringBuilder("{\n  \"version\":\"26.3\",\n  \"noise_order\":[\n");
+        int i = 0;
+        for (Map.Entry<String, Object> e : NORMAL_BY_ID.entrySet()) {
+            Object synth = SYNTH_BY_NOISE.get(e.getValue());
+            float v = synth == null ? 0.0f : (Float) get.invoke(synth, px, py, pz);
+            if (i > 0) sb.append(",\n");
+            sb.append("    {\"id\":\"").append(e.getKey()).append("\",\"v\":\"")
+              .append(Float.floatToRawIntBits(v) & 0xFFFFFFFFL).append("\"}");
+            i++;
+        }
+        sb.append("\n  ]\n}\n");
+        Files.writeString(Path.of(".local/oracle/noises.json"), sb.toString(), StandardCharsets.UTF_8);
+        System.out.println("wrote .local/oracle/noises.json (" + i + " noises)");
+    }
+
+    public static void main(String[] args) throws Exception {
+        init();
+        String outPath = args.length > 0 ? args[0] : "df.json";
 
         List<String> entries = new ArrayList<>();
         for (String key : ROUTER_KEYS) {
@@ -101,6 +136,8 @@ public final class DfOracle {
     }
 
     private static Object synthFor(Object normalNoise) throws Exception {
+        Object cached = SYNTH_BY_NOISE.get(normalNoise);
+        if (cached != null) return cached;
         Object synth = normalNoise.getClass()
                 .getMethod("create", Class.forName("net.minecraft.util.RandomSource"))
                 .invoke(normalNoise, random);
@@ -109,7 +146,8 @@ public final class DfOracle {
     }
 
     private static Object holderFor(String id) throws Exception {
-        Object normalNoise = synthFor(parseNormalNoise(id));
+        Object normalNoise = parseNormalNoise(id);
+        Object synth = synthFor(normalNoise); // creates + registers the Noise
         return Class.forName("net.minecraft.core.Holder").getMethod("direct", Object.class).invoke(null, normalNoise);
     }
 
@@ -224,10 +262,15 @@ public final class DfOracle {
                 return Class.forName("net.minecraft.world.level.levelgen.densityfunction.generator.ConstantFunction")
                         .getConstructor(float.class).newInstance((float) j.numVal("value", 0));
             case "beardifier":
-                return Class.forName("net.minecraft.world.level.levelgen.Beardifier").getField("EMPTY").get(null);
-            case "blend_density":
             case "blend_alpha":
             case "blend_offset":
+                // Codecs map these to SimpleDensityFunction constants via
+                // DensityFunctions.*, not the Beardifier helper class.
+                return Class.forName("net.minecraft.world.level.levelgen.densityfunction.DensityFunctions")
+                        .getMethod(type.equals("beardifier") ? "beardifier"
+                                : type.equals("blend_alpha") ? "blendAlpha" : "blendOffset")
+                        .invoke(null);
+            case "blend_density":
             case "distance_to_point":
             case "old_blended_noise":
             case "interval_select":
@@ -238,39 +281,45 @@ public final class DfOracle {
                 Class<?> c;
                 Object a, b, d;
                 switch (type) {
-                    case "blend_density": case "blend_alpha": case "blend_offset": {
+                    case "blend_density":
                         c = Class.forName("net.minecraft.world.level.levelgen.densityfunction.op.BlendDensityFunction");
-                        Object input = child(j, "input");
-                        if (input == null) input = Class.forName("net.minecraft.world.level.levelgen.densityfunction.generator.ConstantFunction").getConstructor(float.class).newInstance(0.0f);
-                        return c.getConstructor(Class.forName("net.minecraft.world.level.levelgen.densityfunction.DensityFunction")).newInstance(input);
-                    }
+                        return c.getConstructor(Class.forName("net.minecraft.world.level.levelgen.densityfunction.DensityFunction"))
+                                .newInstance(child(j, "input"));
                     case "distance_to_point":
                         c = Class.forName("net.minecraft.world.level.levelgen.densityfunction.op.DistanceToPointFunction");
                         a = j.strVal("radius");
                         return c.getConstructor(int.class, double.class, double.class, double.class)
                                 .newInstance(j.intVal("inclusive", 0), j.numVal("y", 0), j.numVal("x", 0), j.numVal("z", 0));
                     case "old_blended_noise":
-                        c = Class.forName("net.minecraft.world.level.levelgen.densityfunction.generator.BlendedNoise");
-                        return c.getConstructor(Class.forName("net.minecraft.util.RandomSource"),
-                                double.class, double.class, double.class, int.class, int.class)
-                                .newInstance(newRandom((long) j.numVal("seed", 1337)),
-                                        j.numVal("amplitude", 1.0), j.numVal("spread_factor", 0.5),
-                                        j.numVal("second_noise", 0.0), j.intVal("smoothing", 0), j.intVal("octaves", 8));
-                    case "interval_select":
+                        c = Class.forName("net.minecraft.world.level.levelgen.synth.BlendedNoise");
+                        return c.getConstructor(double.class, double.class, double.class,
+                                        double.class, double.class)
+                                .newInstance(j.numVal("xz_scale", 0.25), j.numVal("y_scale", 0.0),
+                                        j.numVal("xz_factor", 0.15), j.numVal("y_factor", 0.65),
+                                        j.numVal("smear_scale_multiplier", 4.0));
+                    case "interval_select": {
+                        // 26.3 IntervalSelectFunction(DensityFunction input, FloatList thresholds,
+                        // List<DensityFunction> functions). Sampler: first threshold > input wins,
+                        // otherwise the last function. Verified in IntervalSelectFunction$Sampler.
                         c = Class.forName("net.minecraft.world.level.levelgen.densityfunction.op.IntervalSelectFunction");
-                        d = child(j, "input");
-                        a = j.numVal("threshold", 0);
-                        // Threshold is an Interval (or a value): JSON shape varies by caller; fall back to zero.
-                        Class<?> intervalC = Class.forName("net.minecraft.util.Interval");
-                        Object threshold;
-                        try {
-                            threshold = intervalC.getMethod("ofExact", float.class).invoke(null, (float) a);
-                        } catch (Exception e) { threshold = intervalC.getMethod("ofExact", double.class).invoke(null, a); }
+                        // Codec field order is input -> thresholds -> functions
+                        // (IntervalSelectFunction.txt), so the input child is built first;
+                        // that order decides the shared-RNG noise seeds.
+                        Object inputFn = buildValue(j.find("input"));
+                        MiniJson.Json th = j.find("thresholds");
+                        if (th == null || th.type != MiniJson.Type.ARR) throw new IllegalStateException("interval_select missing thresholds: " + j.dump());
+                        float[] thresholds = new float[th.arr.size()];
+                        for (int i = 0; i < thresholds.length; i++) thresholds[i] = (float) th.arr.get(i).num;
+                        Object list = Class.forName("it.unimi.dsi.fastutil.floats.FloatArrayList")
+                                .getConstructor(float[].class).newInstance((Object) thresholds);
+                        List<Object> functions = new ArrayList<>();
+                        MiniJson.Json fs = j.find("functions");
+                        if (fs == null || fs.type != MiniJson.Type.ARR) throw new IllegalStateException("interval_select missing functions: " + j.dump());
+                        for (MiniJson.Json f : fs.arr) functions.add(buildValue(f));
                         return c.getConstructor(Class.forName("net.minecraft.world.level.levelgen.densityfunction.DensityFunction"),
-                                        Class.forName("net.minecraft.util.Interval"),
-                                        Class.forName("net.minecraft.world.level.levelgen.densityfunction.DensityFunction"),
-                                        Class.forName("net.minecraft.world.level.levelgen.densityfunction.DensityFunction"))
-                                .newInstance(d, threshold, child(j, "when_in_range"), child(j, "when_out_of_range"));
+                                        Class.forName("it.unimi.dsi.fastutil.floats.FloatList"), java.util.List.class)
+                                .newInstance(inputFn, list, functions);
+                    }
                     case "slice": {
                         c = Class.forName("net.minecraft.world.level.levelgen.densityfunction.op.SliceFunction");
                         // SliceFunction: slices on a fixed coordinate; JSON may use axis+fixed or x/z directly.
@@ -283,11 +332,12 @@ public final class DfOracle {
                                         j.numVal("from_min", 0), j.numVal("from_max", 0), j.numVal("to_value", 0));
                     }
                     case "spline":
+                        // SplineFunction wraps a CubicSpline<Coordinate>; build the real
+                        // one through CubicSpline.builder + Builder.addPoint so the
+                        // oracle runs vanilla's cubic interpolation, not a fallback.
                         c = Class.forName("net.minecraft.world.level.levelgen.densityfunction.op.SplineFunction");
-                        a = j.numVal("curve_degree", 0);
-                        d = child(j, "arg");
-                        // Fallback: SliceSampler over the arg function, clamped to arg range.
-                        return d;
+                        return c.getConstructor(Class.forName("net.minecraft.util.CubicSpline"))
+                                .newInstance(buildSpline(j.find("spline")));
                     default:
                         throw new UnsupportedOperationException("df op " + type);
                 }
@@ -299,7 +349,8 @@ public final class DfOracle {
 
     private static Object buildNoiseFunction(MiniJson.Json j) throws Exception {
         String noiseId = j.strVal("noise");
-        Object normalNoise = synthFor(parseNormalNoise(noiseId));
+        Object normalNoise = parseNormalNoise(noiseId);
+        synthFor(normalNoise); // creates the Noise; SYNTH_BY_NOISE maps NormalNoise -> Noise
         Object holder = Class.forName("net.minecraft.core.Holder").getMethod("direct", Object.class).invoke(null, normalNoise);
         double xz = j.find("xz_scale") == null ? 0.25 : j.numVal("xz_scale", 0.25);
         double y = j.find("y_scale") == null ? 0.0 : j.numVal("y_scale", 0.0);
@@ -309,9 +360,15 @@ public final class DfOracle {
                         Class.forName("net.minecraft.world.level.levelgen.densityfunction.DensityFunction"),
                         Class.forName("net.minecraft.world.level.levelgen.densityfunction.DensityFunction"))
                 .newInstance(holder, xz, y,
-                        j.find("shift_x") != null ? child(j, "shift_x") : null,
-                        j.find("shift_y") != null ? child(j, "shift_y") : null,
-                        j.find("shift_z") != null ? child(j, "shift_z") : null);
+                        j.find("shift_x") != null ? child(j, "shift_x")
+                                : Class.forName("net.minecraft.world.level.levelgen.densityfunction.generator.ConstantFunction")
+                                        .getConstructor(float.class).newInstance(0.0f),
+                        j.find("shift_y") != null ? child(j, "shift_y")
+                                : Class.forName("net.minecraft.world.level.levelgen.densityfunction.generator.ConstantFunction")
+                                        .getConstructor(float.class).newInstance(0.0f),
+                        j.find("shift_z") != null ? child(j, "shift_z")
+                                : Class.forName("net.minecraft.world.level.levelgen.densityfunction.generator.ConstantFunction")
+                                        .getConstructor(float.class).newInstance(0.0f));
     }
 
     // ------------------------------------------------------------------ helpers
@@ -320,9 +377,54 @@ public final class DfOracle {
         return s == null ? "" : (s.startsWith("minecraft:") ? s.substring(10) : s);
     }
 
+    /** JSON spline -> real CubicSpline<Coordinate> via CubicSpline.builder + addPoint. */
+    private static Object buildSpline(MiniJson.Json spline) throws Exception {
+        if (spline == null) throw new IllegalStateException("spline node missing");
+        Class<?> coordinateC = Class.forName("net.minecraft.world.level.levelgen.densityfunction.op.SplineFunction$Coordinate");
+        Object coordinate = coordinateC.getConstructor(
+                Class.forName("net.minecraft.world.level.levelgen.densityfunction.DensityFunction"))
+                .newInstance(buildValue(spline.find("coordinate")));
+        Class<?> cubicC = Class.forName("net.minecraft.util.CubicSpline");
+        Object builder = cubicC.getMethod("builder", Class.forName("net.minecraft.util.BoundedFloatFunction"))
+                .invoke(null, coordinate);
+        Class<?> builderC = Class.forName("net.minecraft.util.CubicSpline$Builder");
+        MiniJson.Json points = spline.find("points");
+        if (points == null || points.type != MiniJson.Type.ARR) {
+            throw new IllegalStateException("spline has no points: " + spline.dump());
+        }
+        for (MiniJson.Json p : points.arr) {
+            float location = (float) p.numVal("location", 0);
+            float derivative = (float) p.numVal("derivative", 0);
+            MiniJson.Json v = p.find("value");
+            if (v == null) throw new IllegalStateException("spline point missing value: " + p.dump());
+            if (v.type == MiniJson.Type.NUM) {
+                builderC.getMethod("addPoint", float.class, float.class, float.class)
+                        .invoke(builder, location, (float) v.num, derivative);
+            } else {
+                // Nested spline points go through the public 2-arg overload, which
+                // vanilla forces to derivative 0.0F (see CubicSpline$Builder.txt).
+                builderC.getMethod("addPoint", float.class, cubicC)
+                        .invoke(builder, location, buildSpline(v));
+            }
+        }
+        return builderC.getMethod("build").invoke(builder);
+    }
+
+    private static Object zero() throws Exception {
+        return Class.forName("net.minecraft.world.level.levelgen.densityfunction.generator.ConstantFunction")
+                .getConstructor(float.class).newInstance(0.0f);
+    }
     private static Object child(MiniJson.Json j, String key) throws Exception {
         MiniJson.Json el = j.find(key);
-        if (el == null) return null;
+        if (el == null) {
+            // Compiler-rewrite paths expect non-null children; default absent
+            // children to zero-density constants.
+            return zero();
+        }
+        return buildValue(el);
+    }
+
+    private static Object buildValue(MiniJson.Json el) throws Exception {
         if (el.type == MiniJson.Type.STR) {
             String s = el.str;
             if (s.startsWith("minecraft:")) return buildRef(s.substring(10));
@@ -333,10 +435,13 @@ public final class DfOracle {
                 return buildRef(s);
             }
         }
+        if (el.type == MiniJson.Type.NUM) {
+            return Class.forName("net.minecraft.world.level.levelgen.densityfunction.generator.ConstantFunction")
+                    .getConstructor(float.class).newInstance((float) el.num);
+        }
         if (el.obj.isEmpty()) {
             // Empty placeholder node (codec defaults, e.g. degenerate JSON slots).
-            return Class.forName("net.minecraft.world.level.levelgen.densityfunction.generator.ConstantFunction")
-                    .getConstructor(float.class).newInstance(0.0f);
+            return zero();
         }
         return buildOp(el);
     }
@@ -373,6 +478,11 @@ public final class DfOracle {
 
     private static Object parseNormalNoise(String id) throws Exception {
         if (id.startsWith("minecraft:")) id = id.substring(10);
+        // RandomState.getOrCreateNoise: one NormalNoise per id, shared by every
+        // density function that references it (so shift_x and shift_z share one).
+        Object cachedNormal = NORMAL_BY_ID.get(id);
+        if (cachedNormal != null) return cachedNormal;
+        System.err.println("NOISE " + id);
         Path file = Path.of(".local/noise/" + id + ".json");
         MiniJson.Json j = MiniJson.parse(Files.readString(file, StandardCharsets.UTF_8));
         Class<?> builder = Class.forName("net.minecraft.world.level.levelgen.synth.NormalNoise$Builder");
@@ -388,6 +498,8 @@ public final class DfOracle {
                 if (v != 1.0) setMod.invoke(b, i, v);
             }
         }
-        return builder.getMethod("build").invoke(b);
+        Object built = builder.getMethod("build").invoke(b);
+        NORMAL_BY_ID.put(id, built);
+        return built;
     }
 }

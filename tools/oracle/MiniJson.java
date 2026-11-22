@@ -32,6 +32,29 @@ public final class MiniJson {
             Json v = find(key);
             return v == null ? def : (int) v.num;
         }
+        public String dump() {
+            StringBuilder sb = new StringBuilder();
+            dump(sb);
+            return sb.toString();
+        }
+        private void dump(StringBuilder sb) {
+            if (type == Type.NULL) { sb.append("null"); return; }
+            if (type == Type.STR) { sb.append('"').append(str).append('"'); return; }
+            if (type == Type.NUM) { sb.append(num); return; }
+            if (type == Type.TRUE || type == Type.FALSE) { sb.append(b); return; }
+            if (type == Type.ARR) { sb.append('[');
+                for (int i = 0; i < arr.size(); i++) { if (i > 0) sb.append(','); arr.get(i).dump(sb); }
+                sb.append(']'); return; }
+            sb.append('{');
+            boolean first = true;
+            for (Map.Entry<String, Json> e : obj.entrySet()) {
+                if (!first) sb.append(',');
+                first = false;
+                sb.append('"').append(e.getKey()).append("\":");
+                e.getValue().dump(sb);
+            }
+            sb.append('}');
+        }
     }
 
     public static Json parse(String text) {

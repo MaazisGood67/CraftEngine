@@ -51,3 +51,14 @@ net.minecraft.world.level.levelgen.LegacyRandomSource	next(int)	src/rng.cpp	mc::
 net.minecraft.world.level.levelgen.BitRandomSource	nextInt(int)	src/rng.cpp	mc::LegacyRandom::nextInt	port	power-of-two fast path + rejection
 net.minecraft.world.level.levelgen.RandomSupport	upgradeSeedTo128bit	src/rng.cpp	mc::upgradeSeedTo128bit	port	Stafford13 mixing
 net.minecraft.world.level.levelgen.MarsagliaPolarGaussian	nextGaussian	src/rng.cpp	mc::MarsagliaPolarGaussian::nextGaussian	partial	log/sqrt may differ by ULP; not in rng harness yet
+net.minecraft.world.level.levelgen.synth.NormalNoise	create	src/noise.cpp	NormalNoise::create	port	moved in from the noise harness; bit-exact per seed
+net.minecraft.world.level.levelgen.RandomState	getOrCreateNoise	src/df.cpp	DfInterp::createNoise	port	one Noise per noise id, lazy first-use, shared
+net.minecraft.world.level.levelgen.densityfunction.generator.NoiseFunction$ShiftedXzSampler	sampleValue	src/df.cpp	sampleNode(noise)	port	d = x*xzScale + shiftX, f = z*xzScale + shiftZ
+net.minecraft.world.level.levelgen.densityfunction.generator.ShiftNoiseFunction$ShiftA	compileSampler	src/df.cpp	sampleNode(shift_a)	port	noise.get(x*0.25, 0, z*0.25) * 4
+net.minecraft.world.level.levelgen.densityfunction.generator.ShiftNoiseFunction$ShiftB$1	sampleValue	src/df.cpp	sampleNode(shift_b)	port	noise.get(z*0.25, x*0.25, 0) * 4 — axes swapped vs ShiftA
+net.minecraft.world.level.levelgen.densityfunction.op.InterpolatedFunction$Sampler	sampleValue	src/df.cpp	sampleNode(interpolated)	port	8 cell corners + Mth.lerp3 (z outer, x inner)
+net.minecraft.world.level.levelgen.densityfunction.op.SplineFunction	compileSampler	src/df.cpp	sampleSpline	port	CubicSpline.Multipoint: hermite + linearExtend at the ends
+net.minecraft.util.CubicSpline$Multipoint	sample	src/df.cpp	sampleSpline	port	verified against CubicSpline$Multipoint.txt
+net.minecraft.world.level.levelgen.densityfunction.op.IntervalSelectFunction	compileSampler	src/df.cpp	sampleNode(interval_select)	port	first threshold > input wins, else last function
+net.minecraft.world.level.levelgen.densityfunction.generator.FindTopSurfaceFunction$Sampler	findSurfaceFrom	src/df.cpp	sampleNode(find_top_surface)	partial	scans down from floor(upper/cell)*cell
+net.minecraft.world.level.levelgen.synth.BlendedNoise	compileSampler	src/df.cpp	sampleNode(old_blended_noise)	missing	still returns 0; blocks final_density + chunk_surface_level

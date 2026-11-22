@@ -242,4 +242,31 @@ packaging, installer, release notes. Performance work never changes behaviour.
 |---|---|---|---|
 | 2026-11-22 | vanilla registry + keybinds from the user's install | `vanilla/registry.json` | 7,053 entries, 62 keybinds |
 | 2026-11-22 | Java RNG port | `parity.ps1 run rng` | **PASS** - 324 entries, exact bits |
+| 2026-11-22 | Noise port | `parity.ps1 compare noise` | **PASS** - 52 entries, exact bits |
+| 2026-11-22 | Density functions: shifted noise, CubicSpline, InterpolatedFunction, shared per-id Noise, ShiftB axis fix, interval_select build order | `parity.ps1 compare df` | **6 of 8 router keys bit-exact** (continents, depth, erosion, ridges, temperature, vegetation); all 27 shared noises bit-exact. `final_density` + `chunk_surface_level` still fail: `old_blended_noise` (BlendedNoise) is not ported yet. |
+
+### Density harness: what the diffs proved
+
+Every fix below was found by a diff, not by reading and guessing:
+
+1. `tools/build-probe.ps1` did not compile at all (`collectNoises` referenced but never defined). The
+   eager noise pass is now `buildRef()` in router order, which is also the RNG order.
+2. `--probe df` wrote to `.local/probe/rng.json`, silently clobbering the RNG harness output.
+   The default output path is now derived from the probe name.
+3. `ShiftNoiseFunction$ShiftB` samples `noise.get(z*0.25, x*0.25, 0)` - the axes are swapped
+   relative to `ShiftA`. Proof: the probe's `shift_z` value equalled Java's `shift_x`.
+4. `InterpolatedFunction$Sampler` was a pass-through. Now: 8 corner samples of the enclosing
+   cell plus `Mth.lerp3` in the exact order (z outer, x inner), with `1.0f/cellSize` scaling.
+5. `spline` was a stub in **both** the oracle and the port, so `depth`/`factor`/`offset` were
+   compared against each other's stub. Both sides now run real cubic splines
+   (`CubicSpline.Multipoint`: hermite `lerp(h,v0,v1) + h*(1-h)*lerp(h,p,q)`, `linearExtend` past the ends).
+6. `RandomState.getOrCreateNoise` creates **one** `Noise` per noise id, lazily, shared by every
+   referencing density function - not one per JSON node. Both sides now share by id.
+7. The Java oracle keyed its sampler map with `equals`, so `spaghetti_3d_1` and `spaghetti_3d_2`
+   (identical parameters, different ids) collapsed into one instance. Now `IdentityHashMap`.
+8. `interval_select` children are built input-first (vanilla codec order), which is what decides
+   the shared-RNG noise seeds.
+
+Attribution is reproducible: `CraftEngineProbe.exe --probe noises` dumps every shared `Noise` at
+(0,0,0) in creation order, and `java DfDebug noises` writes the same JSON from the real jar.
 

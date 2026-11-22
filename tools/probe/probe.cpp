@@ -14,6 +14,7 @@
 #include <vector>
 #include <filesystem>
 using namespace std::string_literals;
+#include "df.h"
 #include "json.h"
 #include "noise.h"
 #include "rng.h"
@@ -249,7 +250,6 @@ void ProbeDf(const std::string& outPath, const std::filesystem::path& dfDir,
     }
     Json root;
     ParseJson(text, root);
-    std::vector<std::string> keys;
     const char* names[] = {
         "overworld/chunk_surface_level", "overworld/continents", "overworld/depth",
         "overworld/erosion", "overworld/final_density", "overworld/ridges",
@@ -257,6 +257,20 @@ void ProbeDf(const std::string& outPath, const std::filesystem::path& dfDir,
     };
     std::vector<std::string> keys(names, names + 8);
     interp.run(outPath, keys);
+}
+
+// Debug helper: dump the shared Noise instances at one point (compare with
+// tools/oracle/DfDebug.java "noises" mode to attribute a mismatch).
+void ProbeNoises(const std::string& outPath, const std::filesystem::path& dfDir,
+                 const std::filesystem::path& noiseDir) {
+    mc::DfInterp interp(dfDir, noiseDir);
+    const char* names[] = {
+        "overworld/chunk_surface_level", "overworld/continents", "overworld/depth",
+        "overworld/erosion", "overworld/final_density", "overworld/ridges",
+        "overworld/temperature", "overworld/vegetation",
+    };
+    std::vector<std::string> keys(names, names + 8);
+    interp.dumpNoises(outPath, keys, 0.0, 0.0, 0.0);
 }
 
 void ProbeRng(const std::string& outPath) {
@@ -293,13 +307,14 @@ void ProbeRng(const std::string& outPath) {
 
 int main(int argc, char** argv) {
     std::string probe = "rng";
-    std::string out = ".local/probe/rng.json";
+    std::string out; // defaults to .local/probe/<probe>.json once --probe is known
     std::string noiseDir = ".local/noise";
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--probe") == 0 && i + 1 < argc) probe = argv[++i];
         else if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) out = argv[++i];
         else if (std::strcmp(argv[i], "--noise-dir") == 0 && i + 1 < argc) noiseDir = argv[++i];
     }
+    if (out.empty()) out = ".local/probe/" + probe + ".json";
     if (probe == "rng") {
         ProbeRng(out);
         return 0;
@@ -312,6 +327,12 @@ int main(int argc, char** argv) {
         const std::filesystem::path noiseDirPath(noiseDir);
         const std::filesystem::path dfDir = noiseDirPath.parent_path() / "df";
         ProbeDf(out, dfDir, noiseDirPath);
+        return 0;
+    }
+    if (probe == "noises") {
+        const std::filesystem::path noiseDirPath(noiseDir);
+        const std::filesystem::path dfDir = noiseDirPath.parent_path() / "df";
+        ProbeNoises(out, dfDir, noiseDirPath);
         return 0;
     }
     std::fprintf(stderr, "unknown probe '%s'\n", probe.c_str());
