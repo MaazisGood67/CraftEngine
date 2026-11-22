@@ -238,10 +238,12 @@ public final class DfOracle {
                 Class<?> c;
                 Object a, b, d;
                 switch (type) {
-                    case "blend_density": case "blend_alpha": case "blend_offset":
+                    case "blend_density": case "blend_alpha": case "blend_offset": {
                         c = Class.forName("net.minecraft.world.level.levelgen.densityfunction.op.BlendDensityFunction");
-                        return c.getConstructor(Class.forName("net.minecraft.world.level.levelgen.densityfunction.DensityFunction"))
-                                .newInstance(child(j, "input"));
+                        Object input = child(j, "input");
+                        if (input == null) input = Class.forName("net.minecraft.world.level.levelgen.densityfunction.generator.ConstantFunction").getConstructor(float.class).newInstance(0.0f);
+                        return c.getConstructor(Class.forName("net.minecraft.world.level.levelgen.densityfunction.DensityFunction")).newInstance(input);
+                    }
                     case "distance_to_point":
                         c = Class.forName("net.minecraft.world.level.levelgen.densityfunction.op.DistanceToPointFunction");
                         a = j.strVal("radius");
