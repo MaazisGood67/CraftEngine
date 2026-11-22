@@ -3,6 +3,6 @@ $proj = "C:/Users/Administrator/Desktop/REA Minecraaft C++"
 $gpp = "C:/Users/Administrator/rea-tools/w64devkit/w64devkit/bin/g++.exe"
 Set-Location -LiteralPath $proj
 New-Item -ItemType Directory -Force -Path (Join-Path $proj '.local\probe') | Out-Null
-& $gpp -std=c++20 -O2 -ffp-contract=off -fno-fast-math -I src tools/probe/probe.cpp src/rng.cpp src/noise.cpp -o CraftEngineProbe.exe -static -s
+& $gpp -std=c++20 -O2 -ffp-contract=off -fno-fast-math -I src tools/probe/probe.cpp src/rng.cpp src/noise.cpp src/df.cpp -o CraftEngineProbe.exe -static -s
 Write-Output ("PROBE EXIT: $LASTEXITCODE")
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

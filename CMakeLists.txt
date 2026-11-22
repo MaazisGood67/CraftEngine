@@ -26,6 +26,8 @@ add_executable(CraftEngine WIN32
     src/assets.cpp
     src/vanilla_data.cpp
     src/rng.cpp
+    src/noise.cpp
+    src/df.cpp
     src/gui.cpp
     src/font.cpp
     src/sound.cpp

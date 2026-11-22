@@ -12,7 +12,8 @@
 #include <sstream>
 #include <string>
 #include <vector>
-
+#include <filesystem>
+using namespace std::string_literals;
 #include "json.h"
 #include "noise.h"
 #include "rng.h"
@@ -237,6 +238,27 @@ void ProbeNoise(const std::string& outPath, const std::filesystem::path& noiseDi
     std::printf("wrote %s (%d entries)\n", outPath.c_str(), static_cast<int>(g_noise.size()));
 }
 
+void ProbeDf(const std::string& outPath, const std::filesystem::path& dfDir,
+             const std::filesystem::path& noiseDir) {
+    mc::DfInterp interp(dfDir, noiseDir);
+    const std::filesystem::path settingsPath = dfDir / "overworld.json";
+    std::string text;
+    if (!ReadFile(settingsPath, text)) {
+        std::fprintf(stderr, "cannot read %s\n", settingsPath.string().c_str());
+        return;
+    }
+    Json root;
+    ParseJson(text, root);
+    std::vector<std::string> keys;
+    const char* names[] = {
+        "overworld/chunk_surface_level", "overworld/continents", "overworld/depth",
+        "overworld/erosion", "overworld/final_density", "overworld/ridges",
+        "overworld/temperature", "overworld/vegetation",
+    };
+    std::vector<std::string> keys(names, names + 8);
+    interp.run(outPath, keys);
+}
+
 void ProbeRng(const std::string& outPath) {
     for (int64_t seed : kSeeds) {
         mc::XoroshiroRandom xoroshiro(seed);
@@ -284,6 +306,12 @@ int main(int argc, char** argv) {
     }
     if (probe == "noise") {
         ProbeNoise(out, noiseDir);
+        return 0;
+    }
+    if (probe == "df") {
+        const std::filesystem::path noiseDirPath(noiseDir);
+        const std::filesystem::path dfDir = noiseDirPath.parent_path() / "df";
+        ProbeDf(out, dfDir, noiseDirPath);
         return 0;
     }
     std::fprintf(stderr, "unknown probe '%s'\n", probe.c_str());
