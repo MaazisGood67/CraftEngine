@@ -1,5 +1,9 @@
 name: build
 
+# Cloud build for a machine that cannot compile the game locally.
+# Mirrors tools/build-local.ps1 exactly: MinGW-w64 g++ 13+, zlib from MSYS2, DX10/DXGI/D3DCompiler.
+# Every push to main produces CraftEngine.exe as an artifact; a v* tag also publishes a release.
+
 on:
   push:
     branches: [main]
@@ -13,31 +17,46 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure
-        run: cmake -B build -A x64 -DCMAKE_BUILD_TYPE=Release
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-zlib
 
-      - name: Build
-        run: cmake --build build --config Release --parallel
-
-      - name: Package
-        shell: pwsh
+      - name: Build (MinGW, static, DX10)
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item build/Release/CraftEngine.exe dist/CraftEngine.exe
-          Get-Item dist/CraftEngine.exe | Select-Object Name, Length
+          set -e
+          mkdir -p build
+          gcc -std=c11 -O2 -c third_party/stb_vorbis.c -o build/stb_vorbis.o
+          g++ -std=c++20 -O2 -mwindows -municode -DUNICODE -D_UNICODE \
+              -I/mingw64/include \
+              src/*.cpp build/stb_vorbis.o \
+              -o build/CraftEngine.exe \
+              -ld3d10 -ldxgi -ld3dcompiler -lwinmm -lz -static -s
+          ls -l build/CraftEngine.exe
+
+      - name: Smoke check (PE, imports)
+        run: |
+          file build/CraftEngine.exe
+          objdump -p build/CraftEngine.exe | grep -E "DLL Name|Subsystem" | head -20
 
       - uses: actions/upload-artifact@v4
         with:
           name: CraftEngine-windows-x64
-          path: dist/CraftEngine.exe
+          path: build/CraftEngine.exe
           if-no-files-found: error
 
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/CraftEngine.exe
+          files: build/CraftEngine.exe
           generate_release_notes: true

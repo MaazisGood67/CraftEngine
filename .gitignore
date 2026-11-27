@@ -28,3 +28,7 @@ options.txt
 
 *.o
 
+
+# Falcon reference source (read-only, not part of the build)
+falcon/
+Falcon-main/
